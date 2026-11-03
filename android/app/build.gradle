@@ -1,0 +1,65 @@
+apply plugin: 'com.android.application'
+
+// Release signing is read from the environment (CI secrets) for Google Play Store AAB / APK release.
+def swkKeystore = System.getenv('SWK_KEYSTORE_FILE')
+
+android {
+    namespace "ae.swkproperties.one"
+    compileSdk rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "ae.swkproperties.bayut"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 100
+        versionName "1.0.0"
+        buildConfigField "String", "SWK_SERVER_URL", "\"https://rent.swkpropertiesuae.com\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        if (swkKeystore) {
+            release {
+                storeFile file(swkKeystore)
+                storePassword System.getenv('SWK_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('SWK_KEY_ALIAS')
+                keyPassword System.getenv('SWK_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (swkKeystore) signingConfig signingConfigs.release
+        }
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError true
+        checkReleaseBuilds true
+    }
+}
+
+dependencies {
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.biometric:biometric:$androidxBiometricVersion"
+    implementation "com.google.android.gms:play-services-location:$playServicesLocationVersion"
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    testImplementation "junit:junit:$junitVersion"
+}

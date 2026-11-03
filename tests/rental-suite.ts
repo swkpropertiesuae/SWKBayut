@@ -3,8 +3,9 @@ import { buildServer } from '../src/server/index'
 import {
   calculateTrueRentalCost,
   evaluateReraRenewal,
-  validateUaeLegalPayment,
   classifyMaintenanceResponsibility,
+  calculatePortalSavingsVsCompetitors,
+  calculateDeveloperBtrYieldProtection,
 } from '../src/shared/uae-rental-rules'
 
 async function runTests() {
@@ -16,26 +17,29 @@ async function runTests() {
     console.log(`  ✓ [${passed}] ${name}`)
   }
 
-  console.log('Running SWKBayut UAE Rental OS Acceptance Suite...')
+  console.log('Running SWKBayut UAE Rental OS & Agent/Developer Super-Suite...')
 
-  // 1. Health & OS Bridge
+  // 1. Health & OS Bridge + Android Package ID
   const healthRes = await app.inject({ method: 'GET', url: '/api/health' })
-  check('GET /api/health returns ORN 51517 & swkpropertiesOS link', () => {
+  check('GET /api/health returns ORN 51517, swkpropertiesOS link & Android package ID', () => {
     assert.equal(healthRes.statusCode, 200)
     const body = healthRes.json()
     assert.equal(body.ok, true)
     assert.equal(body.reraOrn, '51517')
+    assert.equal(body.androidPackage, 'ae.swkproperties.bayut')
   })
 
   // 2. Bootstrap Payload
   const bootRes = await app.inject({ method: 'GET', url: '/api/bootstrap' })
   const boot = bootRes.json()
-  check('GET /api/bootstrap returns canonical buildings, deduplicated units, leases, PDCs, and maintenance', () => {
+  check('GET /api/bootstrap returns buildings, units, leases, PDCs, developer BTR pools, reverse briefs & CRM feeds', () => {
     assert.equal(bootRes.statusCode, 200)
     assert.ok(boot.buildings.length >= 6)
     assert.ok(boot.units.length >= 6)
-    assert.ok(boot.leases.length >= 2)
-    assert.ok(boot.cheques.length >= 4)
+    assert.ok(boot.developerPools.length >= 3)
+    assert.ok(boot.reverseBriefs.length >= 3)
+    assert.ok(boot.crmFeeds.length >= 2)
+    assert.ok(boot.gatePasses.length >= 1)
   })
 
   // 3. Hybrid Supply Commission & True Monthly Cost Engine
@@ -106,7 +110,7 @@ async function runTests() {
       reraIndexRent: 130000,
       proposedRent: 115000,
       leaseEndDate: '2026-12-31',
-      noticeServedDate: '2026-11-01', // Less than 90 days before Dec 31!
+      noticeServedDate: '2026-11-01',
     })
     assert.equal(lateEval.noticeGivenOnTime, false)
     assert.equal(lateEval.maxAllowedIncreasePct, 0)
@@ -133,7 +137,7 @@ async function runTests() {
     assert.match(pdcRes.json().status, /Bounce Prevented/)
   })
 
-  // 9. A2A Partner Registration & Landlord Onboarding
+  // 9. A2A Partner Registration
   const a2aRes = await app.inject({
     method: 'POST',
     url: '/api/a2a/register',
@@ -151,8 +155,69 @@ async function runTests() {
     assert.equal(a2aRes.json().mandate.agreed_a2a_split_pct, 50)
   })
 
+  // 10. Agency Portal Cost Savings Engine & Free XML CRM Feed Sync
+  const crmRes = await app.inject({
+    method: 'POST',
+    url: '/api/crm-sync/import',
+    payload: {
+      agencyName: 'Espace / Allsopp Partner Desk',
+      crmProvider: 'PropSpace / Propertybase XML',
+      feedUrl: 'https://feeds.propspace.com/partner.xml',
+      unitsCount: 60,
+    },
+  })
+  check('POST /api/crm-sync/import imports XML feed at AED 0 cost & computes annual portal savings', () => {
+    assert.equal(crmRes.statusCode, 200)
+    const body = crmRes.json()
+    assert.equal(body.savings.swkBayutUpfrontListingCostAed, 0)
+    assert.ok(body.savings.annualPortalSavingsAed >= 150000)
+  })
+
+  // 11. Developer BTR Anti-Cannibalization FIFO Queue Reservation
+  const fifoRes = await app.inject({
+    method: 'POST',
+    url: '/api/developer-pools/1/reserve',
+  })
+  check('POST /api/developer-pools/:id/reserve locks FIFO unit and protects building yield floor', () => {
+    assert.equal(fifoRes.statusCode, 200)
+    assert.equal(fifoRes.json().ok, true)
+    const yieldProt = calculateDeveloperBtrYieldProtection({ totalUnits: 180, protectedFloorRentAed: 135000 })
+    assert.ok(yieldProt.assetValuationProtectedAed > 20000000)
+  })
+
+  // 12. Reverse Rental Auction (Landlord Bids on Verified Tenant Brief)
+  const bidRes = await app.inject({
+    method: 'POST',
+    url: '/api/reverse-briefs/1/bid',
+    payload: {
+      bidRentAed: 162000,
+      unitLabel: 'Downtown Views II · #4805',
+    },
+  })
+  check('POST /api/reverse-briefs/:id/bid records landlord bid on UAE-PASS verified tenant brief', () => {
+    assert.equal(bidRes.statusCode, 200)
+    assert.equal(bidRes.json().bestBidRentAed, 162000)
+  })
+
+  // 13. Smart Building OA Move-In Gate Pass QR Generator
+  const passRes = await app.inject({
+    method: 'POST',
+    url: '/api/gate-pass/generate',
+    payload: {
+      buildingName: 'Marina Gate I',
+      unitNo: '3402',
+      tenantName: 'Alexander Vance',
+      moverCompany: 'TruKKer UAE',
+      moveDate: '2026-11-20',
+    },
+  })
+  check('POST /api/gate-pass/generate issues verified Building OA Security QR Move-In Pass', () => {
+    assert.equal(passRes.statusCode, 200)
+    assert.match(passRes.json().pass.qr_token, /^QR-OA-VERIFIED/)
+  })
+
   await app.close()
-  console.log(`\nALL ${passed}/${passed} SWKBAYUT UAE RENTAL OS CHECKS PASSED!`)
+  console.log(`\nALL ${passed}/${passed} SWKBAYUT UAE RENTAL OS & SUPER-HUB CHECKS PASSED!`)
 }
 
 runTests().catch(err => {

@@ -4,9 +4,11 @@ import path from 'node:path'
 import {
   type BuildingProfile,
   type RentalUnit,
-  calculateTrueRentalCost,
+  type DeveloperLeaseUpPool,
+  type VerifiedTenantBrief,
   evaluateReraRenewal,
   classifyMaintenanceResponsibility,
+  calculateDeveloperBtrYieldProtection,
 } from '../shared/uae-rental-rules'
 
 const dataDir = path.resolve('data')
@@ -197,7 +199,238 @@ export function initSchemaAndSeed() {
       status TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS developer_btr_pools (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_code TEXT NOT NULL UNIQUE,
+      project_name TEXT NOT NULL,
+      developer_name TEXT NOT NULL,
+      community TEXT NOT NULL,
+      handover_date TEXT NOT NULL,
+      total_handover_units INTEGER NOT NULL,
+      leased_count INTEGER NOT NULL,
+      active_public_queue_cap INTEGER NOT NULL DEFAULT 3,
+      protected_floor_rent_1br_aed INTEGER NOT NULL,
+      protected_floor_rent_2br_aed INTEGER NOT NULL,
+      yield_protection_boost_pct REAL NOT NULL,
+      dlp_snagging_included INTEGER NOT NULL DEFAULT 1,
+      commission_to_partner_agents_pct REAL NOT NULL DEFAULT 5.0,
+      status TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tenant_reverse_briefs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      brief_code TEXT NOT NULL UNIQUE,
+      tenant_alias TEXT NOT NULL,
+      corporate_employer TEXT NOT NULL,
+      uae_pass_verified INTEGER NOT NULL DEFAULT 1,
+      preferred_communities TEXT NOT NULL,
+      bedrooms_min INTEGER NOT NULL,
+      max_annual_budget_aed INTEGER NOT NULL,
+      cheques_ready INTEGER NOT NULL,
+      target_move_in_date TEXT NOT NULL,
+      representing_agent_name TEXT NOT NULL,
+      representing_agency_orn TEXT NOT NULL,
+      bids_count INTEGER NOT NULL DEFAULT 0,
+      best_bid_rent_aed INTEGER,
+      best_bid_unit_label TEXT,
+      status TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS crm_xml_feeds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agency_name TEXT NOT NULL,
+      crm_provider TEXT NOT NULL,
+      feed_url TEXT NOT NULL,
+      imported_units_count INTEGER NOT NULL,
+      annual_credit_burn_saved_aed INTEGER NOT NULL,
+      synced_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS move_in_gate_passes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pass_code TEXT NOT NULL UNIQUE,
+      building_name TEXT NOT NULL,
+      unit_no TEXT NOT NULL,
+      tenant_name TEXT NOT NULL,
+      ejari_verified INTEGER NOT NULL DEFAULT 1,
+      dewa_verified INTEGER NOT NULL DEFAULT 1,
+      chiller_verified INTEGER NOT NULL DEFAULT 1,
+      mover_company TEXT NOT NULL,
+      move_date TEXT NOT NULL,
+      qr_token TEXT NOT NULL,
+      status TEXT NOT NULL
+    );
   `)
+
+  // Seed Developer BTR & Bulk Handover Lease-Up Pools if empty
+  const devCount = (db.prepare('SELECT COUNT(*) as c FROM developer_btr_pools').get() as { c: number }).c
+  if (devCount === 0) {
+    const insertDev = db.prepare(`
+      INSERT INTO developer_btr_pools (
+        project_code, project_name, developer_name, community, handover_date,
+        total_handover_units, leased_count, active_public_queue_cap,
+        protected_floor_rent_1br_aed, protected_floor_rent_2br_aed,
+        yield_protection_boost_pct, dlp_snagging_included, commission_to_partner_agents_pct, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    insertDev.run(
+      'DEV-PENINSULA-4',
+      'Peninsula Four — The Plaza (Bulk Handover Lease-Up)',
+      'Select Group',
+      'Business Bay Waterfront',
+      '2026-11-30',
+      180,
+      114,
+      3,
+      135000,
+      195000,
+      16.5,
+      1,
+      5.0,
+      'FIFO Anti-Cannibalization Active (Max 3 Units Shown per Layout)',
+    )
+    insertDev.run(
+      'DEV-OXFORD-GARDENS',
+      'Oxford Gardens Smart Resort Tower',
+      'Iman Developers',
+      'Arjan / Miracle Garden',
+      '2026-12-15',
+      120,
+      78,
+      3,
+      78000,
+      112000,
+      14.2,
+      1,
+      5.0,
+      'Pre-Handover DLP Snag-to-Lease Open (0-Day Vacancy Mode)',
+    )
+    insertDev.run(
+      'DEV-CREEK-WATERS',
+      'Creek Waters II — Island BTR Pool',
+      'Emaar Properties (Institutional Pool)',
+      'Dubai Creek Harbour',
+      '2027-01-10',
+      150,
+      62,
+      4,
+      128000,
+      182000,
+      15.8,
+      1,
+      5.0,
+      'FIFO Queue Active — Protected RERA Yield Floor',
+    )
+  }
+
+  // Seed Reverse Rental Auction (Verified Tenant Briefs) if empty
+  const briefCount = (db.prepare('SELECT COUNT(*) as c FROM tenant_reverse_briefs').get() as { c: number }).c
+  if (briefCount === 0) {
+    const insertBrief = db.prepare(`
+      INSERT INTO tenant_reverse_briefs (
+        brief_code, tenant_alias, corporate_employer, uae_pass_verified,
+        preferred_communities, bedrooms_min, max_annual_budget_aed, cheques_ready,
+        target_move_in_date, representing_agent_name, representing_agency_orn,
+        bids_count, best_bid_rent_aed, best_bid_unit_label, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    insertBrief.run(
+      'TENANT-BRIEF-901',
+      'VP Engineering · Emirates Group',
+      'Emirates Group / Corporate Housing',
+      1,
+      'Dubai Hills Estate, Downtown Dubai, or Business Bay',
+      2,
+      175000,
+      1,
+      '2026-11-18',
+      'Mohammad Haseeb',
+      'ORN-51517',
+      2,
+      168000,
+      'Downtown Views II · #4805 (Chiller Free)',
+      '1 Cheque Ready in Bank — Accepting Landlord Bids',
+    )
+    insertBrief.run(
+      'TENANT-BRIEF-902',
+      'Senior Legal Counsel · ADGM / DIFC',
+      'Clifford Chance / DIFC',
+      1,
+      'Dubai Marina or DIFC / Index Tower',
+      1,
+      130000,
+      2,
+      '2026-11-22',
+      'Talha Shabbir',
+      'ORN-51517',
+      3,
+      124000,
+      'Marina Gate I · #3402 (Full Marina View)',
+      'UAE PASS KYC Verified — Landlords Bidding Down',
+    )
+    insertBrief.run(
+      'TENANT-BRIEF-903',
+      'Regional Medical Director · Cleveland Clinic',
+      'Mubadala Health / Abu Dhabi',
+      1,
+      'Al Reem Island or Al Maryah Island (Abu Dhabi)',
+      1,
+      88000,
+      1,
+      '2026-11-25',
+      'Shabib Siraj',
+      'ORN-51517',
+      1,
+      81000,
+      'Sun Tower Shams Gate · #4201',
+      'Tawtheeq Instant Ready — Accepting Bids',
+    )
+  }
+
+  // Seed CRM XML Feeds & Move-In Gate Passes if empty
+  const feedCount = (db.prepare('SELECT COUNT(*) as c FROM crm_xml_feeds').get() as { c: number }).c
+  if (feedCount === 0) {
+    const insertFeed = db.prepare(`
+      INSERT INTO crm_xml_feeds (agency_name, crm_provider, feed_url, imported_units_count, annual_credit_burn_saved_aed, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    insertFeed.run(
+      'SWK Properties LLC (ORN 51517)',
+      'SWK Properties OS Native Bridge',
+      'https://os.swkpropertiesuae.com/api/syndication/swkbayut.xml',
+      48,
+      163200,
+      '2026-11-04T03:30:00Z',
+    )
+    insertFeed.run(
+      'Apex Crest Real Estate LLC',
+      'PropSpace / Propertybase XML',
+      'https://feeds.propspace.com/apex-crest-rera-verified.xml',
+      32,
+      115200,
+      '2026-11-04T02:45:00Z',
+    )
+  }
+
+  const passCount = (db.prepare('SELECT COUNT(*) as c FROM move_in_gate_passes').get() as { c: number }).c
+  if (passCount === 0) {
+    db.prepare(`
+      INSERT INTO move_in_gate_passes (
+        pass_code, building_name, unit_no, tenant_name, ejari_verified, dewa_verified, chiller_verified,
+        mover_company, move_date, qr_token, status
+      ) VALUES (?, ?, ?, ?, 1, 1, 1, ?, ?, ?, ?)
+    `).run(
+      'NOC-PASS-2026-8841',
+      'Marina Gate I (Select Group)',
+      '3402',
+      'Alexander Vance',
+      'TruKKer / Allied Pickfords UAE',
+      '2026-11-15',
+      'QR-OA-VERIFIED-MG1-3402',
+      'Cleared by Building OA Security — Gate Barrier Auto-Approved',
+    )
+  }
 
   const bCount = (db.prepare('SELECT COUNT(*) as c FROM buildings').get() as { c: number }).c
   if (bCount > 0) return
@@ -247,7 +480,7 @@ export function initSchemaAndSeed() {
       serviceChargeSqft: 22.8,
       metroStation: 'Burj Khalifa / Dubai Mall Metro',
       metroWalkMinsWinter: 7,
-      metroWalkMinsSummerShade: 5, // Air-conditioned Dubai Mall Zabeel bridge!
+      metroWalkMinsSummerShade: 5,
       commuteDifcMins: 6,
       commuteMediaCityMins: 21,
       commuteBusinessBayMins: 8,
@@ -665,7 +898,6 @@ export function initSchemaAndSeed() {
     })
   }
 
-  // Seed Active Leases for Post-Lease Shield, PDC Vault, and RERA Renewal Shield
   const insertLease = db.prepare(`
     INSERT INTO active_leases_shield (
       lease_code, unit_id, unit_label, tenant_name, landlord_name, ejari_no,
@@ -686,8 +918,8 @@ export function initSchemaAndSeed() {
     '2027-01-14',
     115000,
     135000,
-    132000, // Landlord asking +14.7%, but Decree 43 caps 11-20% below index at 5% (AED 120,750)!
-    '2026-10-05', // Served on time (before Oct 16 90-day cutoff)
+    132000,
+    '2026-10-05',
     5750,
     6,
     99,
@@ -706,7 +938,7 @@ export function initSchemaAndSeed() {
     '2026-12-19',
     72000,
     82000,
-    80000, // Notice served LATE (after 90-day deadline of 2026-09-20) -> 0% allowed!
+    80000,
     '2026-10-18',
     7200,
     6,
@@ -715,7 +947,6 @@ export function initSchemaAndSeed() {
     1,
   )
 
-  // Seed PDC Cheques in SWK Vault
   const insertPdc = db.prepare(`
     INSERT INTO pdc_cheques (lease_code, cheque_no, bank_name, tenant_name, unit_label, due_date, amount_aed, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -725,7 +956,6 @@ export function initSchemaAndSeed() {
   insertPdc.run('EJARI-2026-884120', 'CHQ-ENBD-740103', 'Emirates NBD', 'Alexander Vance', 'Marina Gate I · 3402', '2026-11-12', 28750, 'Due Soon (8 Days)')
   insertPdc.run('EJARI-2026-991044', 'CHQ-FAB-881204', 'First Abu Dhabi Bank (FAB)', 'Priya Nair', 'Oxford 212 JVC · 411', '2026-11-18', 18000, 'In SWK Vault')
 
-  // Seed Maintenance Tickets with AED 500 UAE Threshold Classifier
   const insertMaint = db.prepare(`
     INSERT INTO maintenance_tickets (lease_code, unit_label, category, issue_summary, estimated_cost_aed, responsible_party, rule_explanation, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -755,7 +985,6 @@ export function initSchemaAndSeed() {
     '2026-11-03T14:15:00Z',
   )
 
-  // Seed initial GPS viewing & A2A Partner registration
   db.prepare(`
     INSERT INTO viewing_bookings (unit_id, tenant_name, tenant_phone, tenant_emirates_id_status, viewing_mode, slot_datetime, advisor_name, gps_status, key_vault_tag, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -892,4 +1121,51 @@ export function getActiveLeasesWithReraShield() {
       reraEvaluation: reraEval,
     }
   })
+}
+
+export function listDeveloperBtrPools(): (DeveloperLeaseUpPool & { yieldProtection: any })[] {
+  const rows = db.prepare('SELECT * FROM developer_btr_pools ORDER BY id ASC').all() as any[]
+  return rows.map(r => ({
+    id: r.id,
+    projectCode: r.project_code,
+    projectName: r.project_name,
+    developerName: r.developer_name,
+    community: r.community,
+    handoverDate: r.handover_date,
+    totalHandoverUnits: r.total_handover_units,
+    leasedCount: r.leased_count,
+    activePublicQueueCap: r.active_public_queue_cap,
+    protectedFloorRent1BrAed: r.protected_floor_rent_1br_aed,
+    protectedFloorRent2BrAed: r.protected_floor_rent_2br_aed,
+    yieldProtectionBoostPct: r.yield_protection_boost_pct,
+    dlpSnaggingIncluded: Boolean(r.dlp_snagging_included),
+    commissionToPartnerAgentsPct: r.commission_to_partner_agents_pct,
+    status: r.status,
+    yieldProtection: calculateDeveloperBtrYieldProtection({
+      totalUnits: r.total_handover_units,
+      protectedFloorRentAed: r.protected_floor_rent_1br_aed,
+    }),
+  }))
+}
+
+export function listTenantReverseBriefs(): VerifiedTenantBrief[] {
+  const rows = db.prepare('SELECT * FROM tenant_reverse_briefs ORDER BY id DESC').all() as any[]
+  return rows.map(r => ({
+    id: r.id,
+    briefCode: r.brief_code,
+    tenantAlias: r.tenant_alias,
+    corporateEmployer: r.corporate_employer,
+    uaePassVerified: Boolean(r.uae_pass_verified),
+    preferredCommunities: r.preferred_communities,
+    bedroomsMin: r.bedrooms_min,
+    maxAnnualBudgetAed: r.max_annual_budget_aed,
+    chequesReady: r.cheques_ready,
+    targetMoveInDate: r.target_move_in_date,
+    representingAgentName: r.representing_agent_name,
+    representingAgencyOrn: r.representing_agency_orn,
+    bidsCount: r.bids_count,
+    bestBidRentAed: r.best_bid_rent_aed ?? undefined,
+    bestBidUnitLabel: r.best_bid_unit_label ?? undefined,
+    status: r.status,
+  }))
 }

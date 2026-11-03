@@ -1,5 +1,6 @@
 /**
- * SWKBayut Shared UAE Rental Intelligence & Loophole-Protection Engine
+ * SWKBayut Shared UAE Rental Intelligence, Loophole-Protection &
+ * Agent / Developer / Property Management Super-Engine
  * Synchronized with SWK Properties OS (RERA ORN 51517)
  */
 
@@ -108,10 +109,6 @@ export interface TrueCostBreakdown {
   }
 }
 
-/**
- * Calculates the exact True Monthly All-In Cost & Move-In Cash Required,
- * plus the Hybrid Commission Split (SWK Exclusive 50/50, A2A 50/25/25, or Direct Landlord Flat AED 2,999).
- */
 export function calculateTrueRentalCost(
   unit: Pick<
     RentalUnit,
@@ -153,22 +150,14 @@ export function calculateTrueRentalCost(
   const monthlyDewaAed =
     unit.chillerProvider === 'DEWA Included' ? 0 : unit.avgMonthlyDewaAed
 
-  // Dubai Municipality Housing Fee = 5% of annual rent / 12 billed on DEWA
   const monthlyMunicipalityFeeAed = Math.round((annualHeadlineRent * 0.05) / 12)
-
-  // Traditional 5% broker fee (min AED 5,000)
   const traditionalBrokerFee = Math.max(5000, Math.round(annualHeadlineRent * 0.05))
-
-  // Hybrid Supply Model Fee:
-  // - DIRECT_LANDLORD: Flat AED 2,999 Digital Execution Fee
-  // - SWK_EXCLUSIVE / A2A_PARTNER: Standard 5% (min AED 5,000)
   const agencyOrPlatformFeeAed =
     tier === 'DIRECT_LANDLORD' ? 2999 : traditionalBrokerFee
 
   const agencyFeeVatAed = Math.round(agencyOrPlatformFeeAed * 0.05)
   const agencyFeeSavingVsTraditionalAed = Math.max(0, traditionalBrokerFee - agencyOrPlatformFeeAed)
 
-  // Security deposit: 5% unfurnished, 10% furnished (or AED 3,000 for 30-day bridge)
   const securityDepositAed =
     chequeOption === 30
       ? 3000
@@ -199,7 +188,6 @@ export function calculateTrueRentalCost(
     dewaRefundableDepositAed +
     chillerRefundableDepositAed
 
-  // Non-refundable annualized fees amortized over 12 months + base rent + utilities
   const trueMonthlyAllInOperatingCostAed = Math.round(
     monthlyBaseRent +
       monthlyChillerAed +
@@ -208,13 +196,11 @@ export function calculateTrueRentalCost(
       (agencyOrPlatformFeeAed + agencyFeeVatAed + ejariRegistrationFeeAed) / 12,
   )
 
-  // Commission split matching swkpropertiesOS leaseHooks
   let a2aPartnerShareAed = 0
   let swkCompanyShareAed = 0
   let swkAdvisorShareAed = 0
 
   if (tier === 'DIRECT_LANDLORD') {
-    // 100% platform revenue to SWK Company (self-serve digital execution)
     swkCompanyShareAed = agencyOrPlatformFeeAed
   } else if (tier === 'A2A_PARTNER') {
     a2aPartnerShareAed = Math.round(agencyOrPlatformFeeAed * 0.5)
@@ -389,4 +375,106 @@ export function classifyMaintenanceResponsibility(params: {
         ? `Quote (AED ${params.estimatedCostAed}) is ≥ AED ${threshold} major maintenance threshold — routed to Landlord in Owner360.`
         : `Quote (AED ${params.estimatedCostAed}) is < AED ${threshold} minor wear threshold — Tenant responsibility.`,
   }
+}
+
+// ------------------------------------------------------------------
+// NEW SUPER-ENGINE 1: Agency & Developer Portal Cost Savings Calculator
+// (Zero-Credit-Burn Model vs. Bayut / Property Finder / Dubizzle)
+// ------------------------------------------------------------------
+export interface PortalSavingsAnalysis {
+  activeListingsCount: number
+  agentsCount: number
+  traditionalPortalAnnualCostAed: number
+  swkBayutUpfrontListingCostAed: number
+  annualPortalSavingsAed: number
+  monthlyCashflowSavedAed: number
+  costPerVerifiedViewingAed: number
+  wasteEliminatedPct: number
+}
+
+export function calculatePortalSavingsVsCompetitors(params: {
+  activeListingsCount: number
+  agentsCount: number
+}): PortalSavingsAnalysis {
+  const listings = Math.max(1, Number(params.activeListingsCount) || 25)
+  const agents = Math.max(1, Number(params.agentsCount) || 10)
+
+  // UAE agencies typically pay AED 1,800–2,800/yr per listing slot + TruCheck/Featured credit burn + seat fees across Bayut/PF
+  const bayutAndPfAnnualEstimate = Math.round(listings * 2400 + agents * 4800)
+  const swkBayutUpfrontListingCostAed = 0 // 100% Free to list verified Form A / Title Deed mandates
+
+  return {
+    activeListingsCount: listings,
+    agentsCount: agents,
+    traditionalPortalAnnualCostAed: bayutAndPfAnnualEstimate,
+    swkBayutUpfrontListingCostAed,
+    annualPortalSavingsAed: bayutAndPfAnnualEstimate,
+    monthlyCashflowSavedAed: Math.round(bayutAndPfAnnualEstimate / 12),
+    costPerVerifiedViewingAed: 0,
+    wasteEliminatedPct: 100,
+  }
+}
+
+// ------------------------------------------------------------------
+// NEW SUPER-ENGINE 2: Developer & BTR Anti-Cannibalization FIFO Lease-Up
+// Protects new handover buildings from investor price wars!
+// ------------------------------------------------------------------
+export interface DeveloperLeaseUpPool {
+  id: number
+  projectCode: string
+  projectName: string
+  developerName: string
+  community: string
+  handoverDate: string
+  totalHandoverUnits: number
+  leasedCount: number
+  activePublicQueueCap: number // Max units shown simultaneously per layout to prevent price wars
+  protectedFloorRent1BrAed: number
+  protectedFloorRent2BrAed: number
+  yieldProtectionBoostPct: number
+  dlpSnaggingIncluded: boolean
+  commissionToPartnerAgentsPct: number
+  status: string
+}
+
+export function calculateDeveloperBtrYieldProtection(pool: {
+  totalUnits: number
+  protectedFloorRentAed: number
+  unmanagedPriceWarDropPct?: number
+}) {
+  const dropPct = pool.unmanagedPriceWarDropPct ?? 14 // Typical 14% rent crash when 100 owners list simultaneously
+  const unmanagedRentAed = Math.round(pool.protectedFloorRentAed * (1 - dropPct / 100))
+  const annualRevenueProtectedAed = (pool.protectedFloorRentAed - unmanagedRentAed) * pool.totalUnits
+  // At a 6.5% cap rate, protecting rent increases building capital valuation by:
+  const assetValuationProtectedAed = Math.round(annualRevenueProtectedAed / 0.065)
+
+  return {
+    protectedFloorRentAed: pool.protectedFloorRentAed,
+    unmanagedFloorWarRentAed: unmanagedRentAed,
+    annualRevenueProtectedAed,
+    assetValuationProtectedAed,
+  }
+}
+
+// ------------------------------------------------------------------
+// NEW SUPER-ENGINE 3: Reverse Rental Auction (Verified Tenant Briefs)
+// Pre-qualified tenants with UAE PASS + Cheques Ready; Landlords/Agents Bid!
+// ------------------------------------------------------------------
+export interface VerifiedTenantBrief {
+  id: number
+  briefCode: string
+  tenantAlias: string
+  corporateEmployer: string
+  uaePassVerified: boolean
+  preferredCommunities: string
+  bedroomsMin: number
+  maxAnnualBudgetAed: number
+  chequesReady: ChequeOption
+  targetMoveInDate: string
+  representingAgentName: string
+  representingAgencyOrn: string
+  bidsCount: number
+  bestBidRentAed?: number
+  bestBidUnitLabel?: string
+  status: string
 }

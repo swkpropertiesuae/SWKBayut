@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SWKBayut Rentals</string>
+    <string name="duty_channel_name">SWKBayut Live GPS Viewing Escort</string>
+    <string name="duty_channel_description">Active GPS verification during scheduled UAE rental property viewings.</string>
+    <string name="duty_notification_title">SWKBayut · Live GPS Viewing Active</string>
+    <string name="duty_notification_stop">Complete viewing</string>
+    <string name="biometric_title">SWKBayut UAE PASS &amp; Biometric Check</string>
+    <string name="biometric_default_reason">Verify identity for instant smart-lock viewing or 48h unit offer lock</string>
+</resources>

@@ -1,0 +1,12 @@
+services:
+  swkbayut:
+    build: .
+    container_name: swkbayut-uae-rental-os
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      - NODE_ENV=production
+      - PORT=8090
+    volumes:
+      - ./data:/app/data

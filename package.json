@@ -2,7 +2,7 @@
   "name": "swk-bayut-uae-rental-os",
   "version": "1.0.0",
   "private": true,
-  "description": "SWKBayut — UAE's First OS-Backed Dedicated Rental Marketplace & Tenancy Lifecycle Super-App (Powered by SWK Properties OS, RERA ORN 51517)",
+  "description": "SWKBayut — UAE's First OS-Backed Dedicated Rental Marketplace, BTR Developer Engine & Native Android App (Powered by SWK Properties OS, RERA ORN 51517)",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -16,7 +16,10 @@
     "build:api": "esbuild src/server/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server/index.mjs --packages=external --sourcemap",
     "start": "node dist/server/index.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx tests/rental-suite.ts"
+    "test": "tsx tests/rental-suite.ts",
+    "android:sync": "npm run build:web && node tools/android/sync-assets.mjs",
+    "android:apk": "cd android && ./gradlew assembleDebug",
+    "android:aab": "cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
