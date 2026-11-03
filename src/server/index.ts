@@ -1,0 +1,410 @@
+import Fastify from 'fastify'
+import fastifyStatic from '@fastify/static'
+import path from 'node:path'
+import fs from 'node:fs'
+import {
+  db,
+  initSchemaAndSeed,
+  listBuildings,
+  listRentalUnits,
+  getActiveLeasesWithReraShield,
+} from './db'
+import {
+  type ChequeOption,
+  type SupplyTier,
+  calculateTrueRentalCost,
+  evaluateReraRenewal,
+  validateUaeLegalPayment,
+  classifyMaintenanceResponsibility,
+} from '../shared/uae-rental-rules'
+
+export function buildServer() {
+  initSchemaAndSeed()
+
+  const app = Fastify({ logger: false })
+
+  app.get('/api/health', async () => ({
+    ok: true,
+    service: 'SWKBayut UAE Dedicated Rental OS',
+    reraOrn: '51517',
+    linkedOs: 'https://github.com/swkpropertiesuae/swkpropertiesOS',
+    timestamp: new Date().toISOString(),
+  }))
+
+  app.get('/api/bootstrap', async () => {
+    const buildings = listBuildings()
+    const units = listRentalUnits()
+    const leases = getActiveLeasesWithReraShield()
+    const cheques = db.prepare('SELECT * FROM pdc_cheques ORDER BY due_date ASC').all()
+    const maintenance = db.prepare('SELECT * FROM maintenance_tickets ORDER BY id DESC').all()
+    const viewings = db.prepare('SELECT * FROM viewing_bookings ORDER BY id DESC').all()
+    const offers = db.prepare('SELECT * FROM rental_offers ORDER BY id DESC').all()
+    const a2aMandates = db.prepare('SELECT * FROM a2a_partner_mandates ORDER BY id DESC').all()
+    const landlordMandates = db.prepare('SELECT * FROM direct_landlord_mandates ORDER BY id DESC').all()
+
+    return {
+      buildings,
+      units,
+      leases,
+      cheques,
+      maintenance,
+      viewings,
+      offers,
+      a2aMandates,
+      landlordMandates,
+      osBridge: {
+        connected: true,
+        sourceRepo: 'https://github.com/swkpropertiesuae/swkpropertiesOS',
+        targetRepo: 'https://github.com/swkpropertiesuae/SWKBayut',
+        orn: '51517',
+        lastSyncedAt: new Date().toISOString(),
+      },
+    }
+  })
+
+  app.post('/api/cost-calculator', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      unitId?: number
+      chequeOption?: ChequeOption
+      supplyTier?: SupplyTier
+    }
+    const units = listRentalUnits()
+    const unit = units.find(u => u.id === Number(body.unitId)) ?? units[0]
+    if (!unit) return reply.code(404).send({ error: 'Unit not found' })
+    const breakdown = calculateTrueRentalCost(
+      unit,
+      (Number(body.chequeOption) as ChequeOption) || 1,
+      body.supplyTier,
+    )
+    return { unitCode: unit.unitCode, breakdown }
+  })
+
+  app.post('/api/viewings', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      unitId: number
+      tenantName: string
+      tenantPhone: string
+      tenantEmiratesIdStatus?: string
+      viewingMode?: string
+      slotDatetime?: string
+    }
+    if (!body.unitId || !body.tenantName || !body.tenantPhone) {
+      return reply.code(400).send({ error: 'Unit, tenant name, and phone number are required.' })
+    }
+    const unit = listRentalUnits().find(u => u.id === Number(body.unitId))
+    if (!unit) return reply.code(404).send({ error: 'Unit not found.' })
+
+    const gpsStatus =
+      unit.keyCustody === 'Smart Lock Instant'
+        ? 'One-Time Smart Lock Passcode Issued (UAE PASS Biometric Matched)'
+        : `SWK ONE Android Dispatched · Key Tag ${unit.keyVaultTag ?? 'SWK-VAULT'} Checked Out`
+
+    const info = db
+      .prepare(`
+        INSERT INTO viewing_bookings (
+          unit_id, tenant_name, tenant_phone, tenant_emirates_id_status,
+          viewing_mode, slot_datetime, advisor_name, gps_status, key_vault_tag, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        unit.id,
+        body.tenantName.trim(),
+        body.tenantPhone.trim(),
+        body.tenantEmiratesIdStatus || 'UAE PASS Verified',
+        body.viewingMode || (unit.keyCustody === 'Smart Lock Instant' ? 'Smart Lock Self-Tour' : 'SWK Advisor GPS Escorted'),
+        body.slotDatetime || 'Today · Within 60 Mins (Instant Key Dispatch)',
+        unit.advisorName,
+        gpsStatus,
+        unit.keyVaultTag ?? 'SWK-VAULT',
+        new Date().toISOString(),
+      )
+
+    const created = db.prepare('SELECT * FROM viewing_bookings WHERE id = ?').get(info.lastInsertRowid)
+    return { ok: true, viewing: created }
+  })
+
+  app.post('/api/offers', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      unitId: number
+      tenantName: string
+      tenantEmail?: string
+      tenantPhone: string
+      kycStatus?: string
+      offeredAnnualRent: number
+      chequeOption: ChequeOption
+      supplyTier?: SupplyTier
+      moveInDate?: string
+      paymentChannel: string
+      destinationAccount?: string
+      lockUnitWithDeposit?: boolean
+    }
+
+    if (!body.unitId || !body.tenantName || !body.offeredAnnualRent || !body.paymentChannel) {
+      return reply.code(400).send({ error: 'Missing required digital offer fields.' })
+    }
+
+    // UAE Legal Payment Guard (Zero Personal Account Tolerance)
+    const paymentCheck = validateUaeLegalPayment(body.paymentChannel, body.destinationAccount ?? '')
+    if (!paymentCheck.ok) {
+      return reply.code(400).send({ error: paymentCheck.error })
+    }
+
+    const unit = listRentalUnits().find(u => u.id === Number(body.unitId))
+    if (!unit) return reply.code(404).send({ error: 'Unit not found.' })
+
+    if (unit.availabilityStatus === 'Ejari Active / Rented') {
+      return reply.code(409).send({
+        error: 'OS Availability Lock: This unit already has an active Ejari lease and cannot accept duplicate offers.',
+      })
+    }
+
+    const effectiveUnit = {
+      ...unit,
+      annualRent1Cheque: Number(body.offeredAnnualRent),
+      annualRent2Cheques: Number(body.offeredAnnualRent),
+      annualRent4Cheques: Number(body.offeredAnnualRent),
+      annualRent12Monthly: Number(body.offeredAnnualRent),
+    }
+
+    const cost = calculateTrueRentalCost(
+      effectiveUnit,
+      (Number(body.chequeOption) as ChequeOption) || 1,
+      body.supplyTier ?? unit.supplyTier,
+    )
+
+    const lockUnit = body.lockUnitWithDeposit !== false
+    const offerStatus = lockUnit
+      ? '48h Unit Lock Active — Pending Landlord 1-Click Sign'
+      : 'Submitted — Pending Landlord Review'
+
+    const info = db
+      .prepare(`
+        INSERT INTO rental_offers (
+          unit_id, tenant_name, tenant_email, tenant_phone, kyc_status,
+          offered_annual_rent, cheque_option, supply_tier, move_in_date,
+          payment_channel, holding_deposit_aed, true_monthly_all_in_aed,
+          swk_company_share_aed, swk_advisor_share_aed, a2a_partner_share_aed,
+          status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        unit.id,
+        body.tenantName.trim(),
+        (body.tenantEmail || 'verified.tenant@uaepass.ae').trim(),
+        body.tenantPhone.trim(),
+        body.kycStatus || 'UAE PASS Verified (Emirates ID Matched)',
+        Number(body.offeredAnnualRent),
+        Number(body.chequeOption) || 1,
+        cost.supplyTier,
+        body.moveInDate || '2026-11-15',
+        body.paymentChannel,
+        lockUnit ? 2000 : 0,
+        cost.trueMonthlyAllInOperatingCostAed,
+        cost.commissionSplit.swkCompanyShareAed,
+        cost.commissionSplit.swkAdvisorShareAed,
+        cost.commissionSplit.a2aPartnerShareAed,
+        offerStatus,
+        new Date().toISOString(),
+      )
+
+    if (lockUnit) {
+      db.prepare('UPDATE rental_units SET availability_status = ? WHERE id = ?').run(
+        'Offer Locked (48h)',
+        unit.id,
+      )
+    }
+
+    const created = db.prepare('SELECT * FROM rental_offers WHERE id = ?').get(info.lastInsertRowid)
+    return { ok: true, offer: created, costBreakdown: cost }
+  })
+
+  app.post('/api/offers/:id/decision', async (req, reply) => {
+    const id = Number((req.params as any).id)
+    const body = (req.body ?? {}) as { decision: 'Accepted — Ejari Issued' | 'Declined — Unit Unlocked' }
+    const offer = db.prepare('SELECT * FROM rental_offers WHERE id = ?').get(id) as any
+    if (!offer) return reply.code(404).send({ error: 'Offer not found' })
+
+    db.prepare('UPDATE rental_offers SET status = ? WHERE id = ?').run(body.decision, id)
+    if (body.decision === 'Accepted — Ejari Issued') {
+      db.prepare('UPDATE rental_units SET availability_status = ? WHERE id = ?').run(
+        'Ejari Active / Rented',
+        offer.unit_id,
+      )
+    } else {
+      db.prepare('UPDATE rental_units SET availability_status = ? WHERE id = ?').run(
+        'Available',
+        offer.unit_id,
+      )
+    }
+    return { ok: true }
+  })
+
+  app.post('/api/pdc/:id/action', async (req, reply) => {
+    const id = Number((req.params as any).id)
+    const body = (req.body ?? {}) as { action: 'Cleared' | 'Deposited' | 'RNPL_Bounce_Shield' }
+    const chq = db.prepare('SELECT * FROM pdc_cheques WHERE id = ?').get(id) as any
+    if (!chq) return reply.code(404).send({ error: 'Cheque not found' })
+
+    const nextStatus =
+      body.action === 'RNPL_Bounce_Shield'
+        ? 'Converted to UAEDDS / RNPL Monthly (Bounce Prevented)'
+        : body.action
+
+    db.prepare('UPDATE pdc_cheques SET status = ? WHERE id = ?').run(nextStatus, id)
+    return { ok: true, id, status: nextStatus }
+  })
+
+  app.post('/api/maintenance', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      leaseCode?: string
+      unitLabel: string
+      category: 'AC / Cooling' | 'Plumbing Leak' | 'Electrical' | 'Appliances' | 'Structural / Roof / Water Heater' | 'Cosmetic / Bulbs'
+      issueSummary: string
+      estimatedCostAed: number
+    }
+    if (!body.unitLabel || !body.issueSummary || !body.estimatedCostAed) {
+      return reply.code(400).send({ error: 'Unit, issue description, and estimated cost are required.' })
+    }
+    const classification = classifyMaintenanceResponsibility({
+      category: body.category || 'AC / Cooling',
+      estimatedCostAed: Number(body.estimatedCostAed),
+    })
+    const status =
+      classification.responsibleParty === 'Landlord'
+        ? 'Routed to Landlord in Owner360 (≥ AED 500 Major SLA)'
+        : 'Auto-Dispatched — Tenant Minor Wear Tier (< AED 500)'
+
+    const info = db
+      .prepare(`
+        INSERT INTO maintenance_tickets (
+          lease_code, unit_label, category, issue_summary, estimated_cost_aed,
+          responsible_party, rule_explanation, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        body.leaseCode || 'EJARI-2026-884120',
+        body.unitLabel,
+        body.category || 'AC / Cooling',
+        body.issueSummary.trim(),
+        Number(body.estimatedCostAed),
+        classification.responsibleParty,
+        classification.ruleExplanation,
+        status,
+        new Date().toISOString(),
+      )
+
+    const ticket = db.prepare('SELECT * FROM maintenance_tickets WHERE id = ?').get(info.lastInsertRowid)
+    return { ok: true, ticket, classification }
+  })
+
+  app.post('/api/rera-calculator', async (req) => {
+    const body = (req.body ?? {}) as {
+      currentRent: number
+      reraIndexRent: number
+      proposedRent: number
+      leaseEndDate: string
+      noticeServedDate?: string | null
+    }
+    return evaluateReraRenewal({
+      currentRent: Number(body.currentRent) || 100000,
+      reraIndexRent: Number(body.reraIndexRent) || 120000,
+      proposedRent: Number(body.proposedRent) || 115000,
+      leaseEndDate: body.leaseEndDate || '2027-01-14',
+      noticeServedDate: body.noticeServedDate || null,
+    })
+  })
+
+  app.post('/api/a2a/register', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      partnerAgencyName: string
+      partnerOrn: string
+      brokerName: string
+      brokerBrn: string
+      unitId: number
+      clientName: string
+    }
+    if (!body.partnerAgencyName || !body.partnerOrn || !body.brokerName || !body.clientName) {
+      return reply.code(400).send({ error: 'Agency ORN, Broker BRN, and Client Name are required.' })
+    }
+    const expires = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
+    const info = db
+      .prepare(`
+        INSERT INTO a2a_partner_mandates (
+          partner_agency_name, partner_orn, broker_name, broker_brn, unit_id,
+          client_name, protection_expires_at, agreed_a2a_split_pct, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 50, ?, ?)
+      `)
+      .run(
+        body.partnerAgencyName.trim(),
+        body.partnerOrn.trim(),
+        body.brokerName.trim(),
+        body.brokerBrn.trim() || 'BRN-VERIFIED',
+        Number(body.unitId) || 1,
+        body.clientName.trim(),
+        expires,
+        'Protected Lead — 50% Partner / 25% SWK / 25% Advisor Locked',
+        new Date().toISOString(),
+      )
+    const mandate = db.prepare('SELECT * FROM a2a_partner_mandates WHERE id = ?').get(info.lastInsertRowid)
+    return { ok: true, mandate }
+  })
+
+  app.post('/api/landlord/onboard', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      landlordName: string
+      uaePassUuid?: string
+      titleDeedNo: string
+      makaniNo: string
+      buildingName: string
+      unitNo: string
+      bedrooms: number
+      askingRentAed: number
+      selectedPlan: string
+    }
+    if (!body.landlordName || !body.titleDeedNo || !body.buildingName || !body.unitNo) {
+      return reply.code(400).send({ error: 'Landlord name, Title Deed No., building, and unit number are required.' })
+    }
+    const info = db
+      .prepare(`
+        INSERT INTO direct_landlord_mandates (
+          landlord_name, uae_pass_uuid, title_deed_no, makani_no, building_name,
+          unit_no, bedrooms, asking_rent_aed, selected_plan, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        body.landlordName.trim(),
+        body.uaePassUuid || `UAEPASS-${Math.floor(100000 + Math.random() * 900000)}`,
+        body.titleDeedNo.trim(),
+        body.makaniNo.trim() || '25194 74812',
+        body.buildingName.trim(),
+        body.unitNo.trim(),
+        Number(body.bedrooms) || 1,
+        Number(body.askingRentAed) || 110000,
+        body.selectedPlan || 'Direct Self-Serve (AED 0 Landlord Fee · Tenant Pays Flat AED 2,999)',
+        'Title Deed & UAE PASS Verified — Live on SWKBayut & Owner360',
+        new Date().toISOString(),
+      )
+    const mandate = db.prepare('SELECT * FROM direct_landlord_mandates WHERE id = ?').get(info.lastInsertRowid)
+    return { ok: true, mandate }
+  })
+
+  // Serve built frontend in production
+  const webDist = path.resolve('dist/web')
+  if (fs.existsSync(webDist)) {
+    app.register(fastifyStatic, { root: webDist, wildcard: false })
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'API route not found' })
+      return reply.sendFile('index.html')
+    })
+  }
+
+  return app
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve('src/server/index.ts')) {
+  const port = Number(process.env.PORT ?? 8090)
+  const app = buildServer()
+  app.listen({ port, host: '0.0.0.0' }).then(() => {
+    console.log(`SWKBayut Rental OS API listening on http://localhost:${port}`)
+  })
+}
