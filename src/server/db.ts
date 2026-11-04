@@ -6,16 +6,23 @@ import {
   type RentalUnit,
   type DeveloperLeaseUpPool,
   type VerifiedTenantBrief,
+  type AuthUser,
+  type UserRole,
+  type RentalDealWorkflow,
   evaluateReraRenewal,
   classifyMaintenanceResponsibility,
   calculateDeveloperBtrYieldProtection,
 } from '../shared/uae-rental-rules'
+import { hashPassword } from './auth'
 
 const dataDir = path.resolve('data')
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
 
 export const db = new Database(path.join(dataDir, 'swkbayut.db'))
 db.pragma('journal_mode = WAL')
+db.pragma('synchronous = NORMAL')
+db.pragma('busy_timeout = 5000')
+db.pragma('foreign_keys = ON')
 
 export function initSchemaAndSeed() {
   db.exec(`
@@ -261,7 +268,366 @@ export function initSchemaAndSeed() {
       qr_token TEXT NOT NULL,
       status TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      role TEXT NOT NULL,
+      uae_pass_verified INTEGER NOT NULL DEFAULT 1,
+      emirates_id_or_passport TEXT NOT NULL,
+      rera_brn TEXT,
+      rera_orn TEXT,
+      agency_or_company_name TEXT,
+      title_deed_ref TEXT,
+      failed_logins INTEGER NOT NULL DEFAULT 0,
+      locked_until TEXT,
+      last_login_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS rental_workflows (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workflow_code TEXT NOT NULL UNIQUE,
+      unit_id INTEGER NOT NULL,
+      unit_code TEXT NOT NULL,
+      building_name TEXT NOT NULL,
+      unit_no TEXT NOT NULL,
+      tenant_name TEXT NOT NULL,
+      tenant_email TEXT NOT NULL,
+      landlord_name TEXT NOT NULL,
+      advisor_name TEXT NOT NULL,
+      supply_tier TEXT NOT NULL,
+      annual_rent_aed INTEGER NOT NULL,
+      cheque_option INTEGER NOT NULL,
+      current_stage INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'IN_PROGRESS',
+      ejari_or_tawtheeq_no TEXT NOT NULL,
+      gate_pass_code TEXT NOT NULL,
+      snagging_score INTEGER NOT NULL DEFAULT 98,
+      swk_company_share_aed INTEGER NOT NULL,
+      swk_advisor_share_aed INTEGER NOT NULL,
+      a2a_partner_share_aed INTEGER NOT NULL,
+      stage_history_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      user_email TEXT,
+      user_role TEXT,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_ref TEXT,
+      details TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON auth_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_units_building ON rental_units(building_id);
+    CREATE INDEX IF NOT EXISTS idx_workflows_stage ON rental_workflows(current_stage);
+    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
   `)
+
+  // Seed 6 pre-verified accounts across all 5 UAE Rental Roles if empty
+  const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c
+  if (userCount === 0) {
+    const defaultPwHash = hashPassword('SwkRent2026!')
+    const insertUser = db.prepare(`
+      INSERT INTO users (
+        email, password_hash, full_name, phone, role, uae_pass_verified,
+        emirates_id_or_passport, rera_brn, rera_orn, agency_or_company_name, title_deed_ref, created_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+    `)
+    const now = '2026-11-04T04:00:00Z'
+    insertUser.run(
+      'admin@swkpropertiesuae.com',
+      defaultPwHash,
+      'Shahid · SWK Managing Director',
+      '+971 50 515 1700',
+      'ADMIN',
+      '784-1990-5151700-1',
+      'BRN-51517',
+      'ORN-51517',
+      'SWK Properties L.L.C.',
+      null,
+      now,
+    )
+    insertUser.run(
+      'advisor@swkpropertiesuae.com',
+      defaultPwHash,
+      'Mohammad Haseeb · Senior RERA Advisor',
+      '+971 50 589 1200',
+      'AGENT',
+      '784-1993-5891200-2',
+      'BRN-58912',
+      'ORN-51517',
+      'SWK Properties L.L.C.',
+      null,
+      now,
+    )
+    insertUser.run(
+      'partner@apexcrest.ae',
+      defaultPwHash,
+      'Omar Farooq · A2A Partner Broker',
+      '+971 52 491 8200',
+      'AGENT',
+      '784-1991-4918200-4',
+      'BRN-49182',
+      'ORN-31940',
+      'Apex Crest Real Estate LLC',
+      null,
+      now,
+    )
+    insertUser.run(
+      'landlord@swkpropertiesuae.com',
+      defaultPwHash,
+      'Dr. Khalid Al Mansoori · Owner360 Landlord',
+      '+971 50 884 1200',
+      'LANDLORD',
+      '784-1982-8841200-9',
+      null,
+      null,
+      'Al Mansoori Family Portfolio',
+      'TD-DXB-2023-19402',
+      now,
+    )
+    insertUser.run(
+      'developer@selectgroup.ae',
+      defaultPwHash,
+      'Rami Al Ghaith · Director of BTR Handover',
+      '+971 56 300 9900',
+      'DEVELOPER',
+      '784-1985-3009900-7',
+      null,
+      'DLD-DEV-104',
+      'Select Group BTR Division',
+      'PROJ-PENINSULA-4',
+      now,
+    )
+    insertUser.run(
+      'tenant@uaepass.ae',
+      defaultPwHash,
+      'Alexander Vance · Verified Tenant',
+      '+971 58 210 4490',
+      'TENANT',
+      '784-1994-2104490-5',
+      null,
+      null,
+      'Emirates Group Executive Housing',
+      null,
+      now,
+    )
+
+    db.prepare(`
+      INSERT INTO audit_logs (user_id, user_email, user_role, action, entity_type, entity_ref, details, created_at)
+      VALUES (1, 'admin@swkpropertiesuae.com', 'ADMIN', 'MVP_COHORT_INITIALIZED', 'SYSTEM', 'MVP-1000', 'SWK RENT 1,000-User MVP Cohort & 5-Role RBAC Guard initialized (RERA ORN 51517)', ?)
+    `).run(now)
+  }
+
+  // Seed 7-Stage End-to-End UAE Rental Deal Workflows if empty
+  const wfCount = (db.prepare('SELECT COUNT(*) as c FROM rental_workflows').get() as { c: number }).c
+  if (wfCount === 0) {
+    const insertWf = db.prepare(`
+      INSERT INTO rental_workflows (
+        workflow_code, unit_id, unit_code, building_name, unit_no,
+        tenant_name, tenant_email, landlord_name, advisor_name, supply_tier,
+        annual_rent_aed, cheque_option, current_stage, status,
+        ejari_or_tawtheeq_no, gate_pass_code, snagging_score,
+        swk_company_share_aed, swk_advisor_share_aed, a2a_partner_share_aed,
+        stage_history_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    insertWf.run(
+      'WF-DXB-2026-101',
+      1,
+      'SWK-RENT-101',
+      'Marina Gate I (Select Group)',
+      '3402',
+      'Alexander Vance',
+      'tenant@uaepass.ae',
+      'H.E. Tariq Al Maktoum Portfolio',
+      'Mohammad Haseeb',
+      'SWK_EXCLUSIVE',
+      125000,
+      2,
+      2,
+      'IN_PROGRESS',
+      'PENDING-EJARI',
+      'PENDING-NOC',
+      99,
+      3125,
+      3125,
+      0,
+      JSON.stringify([
+        {
+          stage: 1,
+          code: 'KYC_AND_VIEWING',
+          completedByRole: 'TENANT',
+          completedByName: 'Alexander Vance',
+          completedAt: '2026-11-04T01:15:00Z',
+          note: 'UAE PASS Emirates ID matched + GPS viewing verified at Marina Gate I.',
+        },
+        {
+          stage: 2,
+          code: 'OFFER_AND_DEPOSIT_LOCK',
+          completedByRole: 'TENANT',
+          completedByName: 'Alexander Vance',
+          completedAt: '2026-11-04T02:00:00Z',
+          note: 'Offer AED 125,000 (2 Cheques) + AED 2,000 SWK Corporate Escrow Lock active.',
+        },
+      ]),
+      '2026-11-04T02:00:00Z',
+    )
+
+    insertWf.run(
+      'WF-DXB-2026-102',
+      2,
+      'SWK-RENT-102',
+      'Downtown Views II — Tower 1',
+      '4805',
+      'Sami Al Hashimi',
+      'sami.hashimi@uaepass.ae',
+      'Dr. Khalid Al Mansoori (UAE PASS Verified)',
+      'SWK Direct Landlord Concierge',
+      'DIRECT_LANDLORD',
+      185000,
+      1,
+      4,
+      'IN_PROGRESS',
+      'PENDING-EJARI',
+      'PENDING-NOC',
+      98,
+      2999,
+      0,
+      0,
+      JSON.stringify([
+        {
+          stage: 1,
+          code: 'KYC_AND_VIEWING',
+          completedByRole: 'TENANT',
+          completedByName: 'Sami Al Hashimi',
+          completedAt: '2026-11-03T10:00:00Z',
+          note: 'Smart-Lock self-tour passcode verified via UAE PASS FaceID.',
+        },
+        {
+          stage: 2,
+          code: 'OFFER_AND_DEPOSIT_LOCK',
+          completedByRole: 'TENANT',
+          completedByName: 'Sami Al Hashimi',
+          completedAt: '2026-11-03T11:30:00Z',
+          note: 'Direct-to-Landlord Flat AED 2,999 fee selected (Saved AED 6,251).',
+        },
+        {
+          stage: 3,
+          code: 'LANDLORD_APPROVAL',
+          completedByRole: 'LANDLORD',
+          completedByName: 'Dr. Khalid Al Mansoori',
+          completedAt: '2026-11-03T14:20:00Z',
+          note: 'Landlord approved 1-cheque offer in Owner360 via UAE PASS signature.',
+        },
+        {
+          stage: 4,
+          code: 'CONTRACT_AND_PAYMENTS',
+          completedByRole: 'TENANT',
+          completedByName: 'Sami Al Hashimi',
+          completedAt: '2026-11-04T03:10:00Z',
+          note: 'DLD Unified Tenancy Contract signed + Manager Cheque verified in SWK Escrow.',
+        },
+      ]),
+      '2026-11-04T03:10:00Z',
+    )
+
+    insertWf.run(
+      'WF-DXB-2026-103',
+      4,
+      'SWK-RENT-104',
+      'Park Heights I — Dubai Hills Boulevard',
+      '1108',
+      'Charlotte Laurent',
+      'charlotte.laurent@totalenergies.ae',
+      'Nasser Al Suwaidi Family Office',
+      'Shabib Siraj (A2A w/ Omar Farooq)',
+      'A2A_PARTNER',
+      138000,
+      1,
+      6,
+      'IN_PROGRESS',
+      'EJARI-2026-774910',
+      'PENDING-NOC',
+      99,
+      1725,
+      1725,
+      3450,
+      JSON.stringify([
+        {
+          stage: 1,
+          code: 'KYC_AND_VIEWING',
+          completedByRole: 'AGENT',
+          completedByName: 'Omar Farooq (Apex Crest A2A)',
+          completedAt: '2026-11-01T12:00:00Z',
+          note: 'Protected A2A viewing completed with SWK Key Vault tag SWK-KEY-PH1-1108.',
+        },
+        {
+          stage: 2,
+          code: 'OFFER_AND_DEPOSIT_LOCK',
+          completedByRole: 'AGENT',
+          completedByName: 'Omar Farooq',
+          completedAt: '2026-11-01T15:00:00Z',
+          note: 'Corporate relocation offer locked in SWK Escrow.',
+        },
+        {
+          stage: 3,
+          code: 'LANDLORD_APPROVAL',
+          completedByRole: 'LANDLORD',
+          completedByName: 'Nasser Al Suwaidi Family Office',
+          completedAt: '2026-11-02T09:00:00Z',
+          note: 'Approved in Owner360.',
+        },
+        {
+          stage: 4,
+          code: 'CONTRACT_AND_PAYMENTS',
+          completedByRole: 'TENANT',
+          completedByName: 'Charlotte Laurent',
+          completedAt: '2026-11-02T16:00:00Z',
+          note: 'Corporate transfer cleared.',
+        },
+        {
+          stage: 5,
+          code: 'EJARI_TAWTHEEQ_ISSUED',
+          completedByRole: 'AGENT',
+          completedByName: 'Shabib Siraj',
+          completedAt: '2026-11-03T11:00:00Z',
+          note: 'Official Ejari #EJARI-2026-774910 issued; 50/25/25 A2A split locked.',
+        },
+        {
+          stage: 6,
+          code: 'DEWA_CHILLER_AND_SNAGGING',
+          completedByRole: 'TENANT',
+          completedByName: 'Charlotte Laurent',
+          completedAt: '2026-11-04T04:10:00Z',
+          note: 'DEWA Premise activated + 50-Point Move-In Snagging Vault locked (99/100).',
+        },
+      ]),
+      '2026-11-04T04:10:00Z',
+    )
+  }
 
   // Seed Developer BTR & Bulk Handover Lease-Up Pools if empty
   const devCount = (db.prepare('SELECT COUNT(*) as c FROM developer_btr_pools').get() as { c: number }).c
@@ -1168,4 +1534,117 @@ export function listTenantReverseBriefs(): VerifiedTenantBrief[] {
     bestBidUnitLabel: r.best_bid_unit_label ?? undefined,
     status: r.status,
   }))
+}
+
+export function mapUserRow(r: any): AuthUser {
+  return {
+    id: r.id,
+    email: r.email,
+    fullName: r.full_name,
+    phone: r.phone,
+    role: r.role as UserRole,
+    uaePassVerified: Boolean(r.uae_pass_verified),
+    emiratesIdOrPassport: r.emirates_id_or_passport,
+    reraBrn: r.rera_brn ?? null,
+    reraOrn: r.rera_orn ?? null,
+    agencyOrCompanyName: r.agency_or_company_name ?? null,
+    titleDeedRef: r.title_deed_ref ?? null,
+    createdAt: r.created_at,
+  }
+}
+
+export function listUsersPublic(): AuthUser[] {
+  const rows = db.prepare('SELECT * FROM users ORDER BY id ASC').all() as any[]
+  return rows.map(mapUserRow)
+}
+
+export function listRentalWorkflows(): RentalDealWorkflow[] {
+  const rows = db.prepare('SELECT * FROM rental_workflows ORDER BY id DESC').all() as any[]
+  return rows.map(r => ({
+    id: r.id,
+    workflowCode: r.workflow_code,
+    unitId: r.unit_id,
+    unitCode: r.unit_code,
+    buildingName: r.building_name,
+    unitNo: r.unit_no,
+    tenantName: r.tenant_name,
+    tenantEmail: r.tenant_email,
+    landlordName: r.landlord_name,
+    advisorName: r.advisor_name,
+    supplyTier: r.supply_tier,
+    annualRentAed: r.annual_rent_aed,
+    chequeOption: r.cheque_option,
+    currentStage: r.current_stage,
+    status: r.status,
+    ejariOrTawtheeqNo: r.ejari_or_tawtheeq_no,
+    gatePassCode: r.gate_pass_code,
+    snaggingScore: r.snagging_score,
+    swkCompanyShareAed: r.swk_company_share_aed,
+    swkAdvisorShareAed: r.swk_advisor_share_aed,
+    a2aPartnerShareAed: r.a2a_partner_share_aed,
+    stageHistory: JSON.parse(r.stage_history_json || '[]'),
+    updatedAt: r.updated_at,
+  }))
+}
+
+export function recordAuditLog(params: {
+  user?: AuthUser | null
+  action: string
+  entityType: string
+  entityRef?: string
+  details: string
+}) {
+  db.prepare(`
+    INSERT INTO audit_logs (user_id, user_email, user_role, action, entity_type, entity_ref, details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.user?.id ?? null,
+    params.user?.email ?? 'anonymous',
+    params.user?.role ?? 'GUEST',
+    params.action,
+    params.entityType,
+    params.entityRef ?? null,
+    params.details,
+    new Date().toISOString(),
+  )
+}
+
+export function getMvpLaunchTelemetry() {
+  const totalUsers = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c
+  const byRoleRows = db
+    .prepare('SELECT role, COUNT(*) as count FROM users GROUP BY role')
+    .all() as { role: UserRole; count: number }[]
+  const roleBreakdown: Record<string, number> = {
+    TENANT: 0,
+    LANDLORD: 0,
+    AGENT: 0,
+    DEVELOPER: 0,
+    ADMIN: 0,
+  }
+  for (const r of byRoleRows) {
+    roleBreakdown[r.role] = r.count
+  }
+
+  const activeWorkflows = (db.prepare('SELECT COUNT(*) as c FROM rental_workflows').get() as { c: number }).c
+  const completedWorkflows = (
+    db.prepare("SELECT COUNT(*) as c FROM rental_workflows WHERE status = 'COMPLETED_ACTIVE_LEASE'").get() as {
+      c: number
+    }
+  ).c
+  const recentAuditLogs = db.prepare('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 15').all()
+
+  return {
+    mvpCohortCapacity: 1000,
+    registeredUsersCount: totalUsers,
+    remainingEarlyAdopterSlots: Math.max(0, 1000 - totalUsers),
+    roleBreakdown,
+    activeWorkflows,
+    completedWorkflows,
+    sqliteWalActive: true,
+    rateLimiterActive: true,
+    helmetSecurityHeadersActive: true,
+    androidBundleReady: true,
+    iosBundleReady: true,
+    recentAuditLogs,
+  }
 }

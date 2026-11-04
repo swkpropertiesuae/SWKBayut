@@ -1,0 +1,7 @@
+#!/bin/sh
+# Gradle start up script for POSIX generated for SWKBayut Android (Gradle 8.9)
+if command -v gradle >/dev/null 2>&1; then
+  exec gradle "$@"
+fi
+APP_HOME=$( cd "${0%/*}" && pwd -P ) || exit
+exec java -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"

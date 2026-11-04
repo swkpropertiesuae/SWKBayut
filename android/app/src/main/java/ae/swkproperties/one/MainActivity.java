@@ -263,6 +263,9 @@ public class MainActivity extends AppCompatActivity {
             case "smsto":
                 intent = new Intent(Intent.ACTION_SENDTO, uri);
                 break;
+            case "whatsapp":
+                intent = new Intent(Intent.ACTION_VIEW, uri);
+                break;
             default:
                 return; // unknown schemes (intent:, file:, javascript:, ...) are dropped
         }

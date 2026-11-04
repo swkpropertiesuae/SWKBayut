@@ -123,6 +123,30 @@ public class SwkNativePlugin {
         return biometricAvailable();
     }
 
+    /** Switch between "emblem" (Emblem + SWK) and "wordmark" (SWK Wordmark) home-screen launcher icons. */
+    @JavascriptInterface
+    public String setLauncherIconVariant(String variant) {
+        try {
+            boolean useWordmark = "wordmark".equalsIgnoreCase(variant);
+            PackageManager pm = activity.getPackageManager();
+            android.content.ComponentName mainComp = new android.content.ComponentName(activity, MainActivity.class);
+            android.content.ComponentName wordmarkComp = new android.content.ComponentName(activity, "ae.swkproperties.one.MainActivityWordmark");
+            pm.setComponentEnabledSetting(
+                wordmarkComp,
+                useWordmark ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            );
+            pm.setComponentEnabledSetting(
+                mainComp,
+                useWordmark ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED : PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP
+            );
+            return new JSONObject().put("ok", true).put("variant", useWordmark ? "wordmark" : "emblem").toString();
+        } catch (Exception e) {
+            return "{\"ok\":false}";
+        }
+    }
+
     /** Result is delivered as a `swk:biometric-result` window event ({ verified, method }). */
     @JavascriptInterface
     public void promptBiometricUnlock(final String reason) {

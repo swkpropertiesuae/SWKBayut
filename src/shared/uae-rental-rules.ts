@@ -478,3 +478,277 @@ export interface VerifiedTenantBrief {
   bestBidUnitLabel?: string
   status: string
 }
+
+// ------------------------------------------------------------------
+// NEW SUPER-ENGINE 4: Role-Based Access Control (RBAC) & 5 UAE Personas
+// ------------------------------------------------------------------
+export type UserRole = 'TENANT' | 'LANDLORD' | 'AGENT' | 'DEVELOPER' | 'ADMIN'
+
+export interface AuthUser {
+  id: number
+  email: string
+  fullName: string
+  phone: string
+  role: UserRole
+  uaePassVerified: boolean
+  emiratesIdOrPassport: string
+  reraBrn?: string | null
+  reraOrn?: string | null
+  agencyOrCompanyName?: string | null
+  titleDeedRef?: string | null
+  createdAt: string
+}
+
+export type RbacAction =
+  | 'BOOK_VIEWING'
+  | 'SUBMIT_OFFER'
+  | 'DECIDE_OFFER'
+  | 'ONBOARD_LANDLORD_UNIT'
+  | 'REGISTER_A2A_MANDATE'
+  | 'IMPORT_CRM_XML'
+  | 'CREATE_DEVELOPER_POOL'
+  | 'RESERVE_DEVELOPER_FIFO'
+  | 'POST_REVERSE_BRIEF'
+  | 'BID_REVERSE_BRIEF'
+  | 'GENERATE_GATE_PASS'
+  | 'MANAGE_PDC_CHEQUES'
+  | 'SUBMIT_MAINTENANCE'
+  | 'ADMIN_PLATFORM_CONTROL'
+
+export const ROLE_CAPABILITIES: Record<
+  UserRole,
+  {
+    label: string
+    badgeColor: string
+    subtitle: string
+    verifyRequirement: string
+    allowedActions: RbacAction[]
+  }
+> = {
+  TENANT: {
+    label: 'Verified Tenant / Expat Renter',
+    badgeColor: 'emerald',
+    subtitle: 'UAE PASS KYC · True Cost Calculator · Instant Viewings · 48h Offer Lock · RERA Shield',
+    verifyRequirement: 'UAE PASS / Emirates ID or New Expat Passport (30-Day Bridge Eligible)',
+    allowedActions: [
+      'BOOK_VIEWING',
+      'SUBMIT_OFFER',
+      'POST_REVERSE_BRIEF',
+      'SUBMIT_MAINTENANCE',
+    ],
+  },
+  LANDLORD: {
+    label: 'Property Owner / Landlord (Owner360)',
+    badgeColor: 'amber',
+    subtitle: 'AED 0 Direct Listing · 1-Click Offer Sign · Reverse Brief Bidding · PDC & Maintenance Shield',
+    verifyRequirement: 'DLD Title Deed No. + UAE PASS Owner Match',
+    allowedActions: [
+      'DECIDE_OFFER',
+      'ONBOARD_LANDLORD_UNIT',
+      'BID_REVERSE_BRIEF',
+      'GENERATE_GATE_PASS',
+      'MANAGE_PDC_CHEQUES',
+      'SUBMIT_MAINTENANCE',
+    ],
+  },
+  AGENT: {
+    label: 'RERA Broker / SWK Advisor / A2A Partner',
+    badgeColor: 'sky',
+    subtitle: 'AED 0 Free CRM XML Sync · Protected 50/25/25 A2A Splits · GPS Key Vault · 1-Tap WhatsApp Pitch',
+    verifyRequirement: 'RERA Broker BRN + Agency ORN (ORN 51517 or Partner ORN)',
+    allowedActions: [
+      'BOOK_VIEWING',
+      'SUBMIT_OFFER',
+      'DECIDE_OFFER',
+      'REGISTER_A2A_MANDATE',
+      'IMPORT_CRM_XML',
+      'RESERVE_DEVELOPER_FIFO',
+      'POST_REVERSE_BRIEF',
+      'BID_REVERSE_BRIEF',
+      'GENERATE_GATE_PASS',
+      'MANAGE_PDC_CHEQUES',
+      'SUBMIT_MAINTENANCE',
+    ],
+  },
+  DEVELOPER: {
+    label: 'Developer / Institutional BTR Manager',
+    badgeColor: 'purple',
+    subtitle: 'Bulk Tower Handover FIFO Queue · Anti-Cannibalization Floor Rent · Pre-Handover Snag-to-Lease',
+    verifyRequirement: 'DLD Developer Project No. / Escrow Registration',
+    allowedActions: [
+      'CREATE_DEVELOPER_POOL',
+      'RESERVE_DEVELOPER_FIFO',
+      'IMPORT_CRM_XML',
+      'DECIDE_OFFER',
+      'GENERATE_GATE_PASS',
+    ],
+  },
+  ADMIN: {
+    label: 'SWK Super Admin & Compliance (ORN 51517)',
+    badgeColor: 'rose',
+    subtitle: 'Full 1,000-User MVP Launch Control · DLD Escrow Guard · KYC Approval · Workflow Override',
+    verifyRequirement: 'SWK Properties L.L.C. Executive Credential (RERA ORN 51517)',
+    allowedActions: [
+      'BOOK_VIEWING',
+      'SUBMIT_OFFER',
+      'DECIDE_OFFER',
+      'ONBOARD_LANDLORD_UNIT',
+      'REGISTER_A2A_MANDATE',
+      'IMPORT_CRM_XML',
+      'CREATE_DEVELOPER_POOL',
+      'RESERVE_DEVELOPER_FIFO',
+      'POST_REVERSE_BRIEF',
+      'BID_REVERSE_BRIEF',
+      'GENERATE_GATE_PASS',
+      'MANAGE_PDC_CHEQUES',
+      'SUBMIT_MAINTENANCE',
+      'ADMIN_PLATFORM_CONTROL',
+    ],
+  },
+}
+
+export function canRoleExecuteAction(role: UserRole, action: RbacAction): boolean {
+  return ROLE_CAPABILITIES[role]?.allowedActions.includes(action) ?? false
+}
+
+// ------------------------------------------------------------------
+// NEW SUPER-ENGINE 5: 7-Stage End-to-End UAE Rental Deal Workflow
+// ------------------------------------------------------------------
+export interface WorkflowStageDefinition {
+  stage: number
+  code:
+    | 'KYC_AND_VIEWING'
+    | 'OFFER_AND_DEPOSIT_LOCK'
+    | 'LANDLORD_APPROVAL'
+    | 'CONTRACT_AND_PAYMENTS'
+    | 'EJARI_TAWTHEEQ_ISSUED'
+    | 'DEWA_CHILLER_AND_SNAGGING'
+    | 'MOVE_IN_NOC_AND_KEYS'
+  title: string
+  shortTitle: string
+  description: string
+  allowedRolesToAdvance: UserRole[]
+  slaHours: number
+  deliverableBadge: string
+}
+
+export const UAE_RENTAL_WORKFLOW_STAGES: WorkflowStageDefinition[] = [
+  {
+    stage: 1,
+    code: 'KYC_AND_VIEWING',
+    title: 'Stage 1 · UAE PASS KYC & Verified GPS / Smart-Lock Viewing',
+    shortTitle: '1. KYC & Viewing',
+    description: 'Tenant identity verified via UAE PASS / Passport and physical key vault or smart-lock viewing completed.',
+    allowedRolesToAdvance: ['TENANT', 'AGENT', 'ADMIN'],
+    slaHours: 2,
+    deliverableBadge: 'UAE PASS + GPS Viewing Verified',
+  },
+  {
+    stage: 2,
+    code: 'OFFER_AND_DEPOSIT_LOCK',
+    title: 'Stage 2 · Digital Offer & AED 2,000 Corporate Escrow Lock (48h)',
+    shortTitle: '2. Offer & 48h Lock',
+    description: 'Binding digital rental terms submitted with legal DLD payment verification; unit locked for 48 hours.',
+    allowedRolesToAdvance: ['TENANT', 'AGENT', 'ADMIN'],
+    slaHours: 4,
+    deliverableBadge: 'Unit Locked 48h in SWK Escrow',
+  },
+  {
+    stage: 3,
+    code: 'LANDLORD_APPROVAL',
+    title: 'Stage 3 · Landlord 1-Click Offer Acceptance (Owner360)',
+    shortTitle: '3. Owner Approval',
+    description: 'Title-Deed verified landlord reviews tenant profile & net yield in Owner360 and signs 1-click acceptance.',
+    allowedRolesToAdvance: ['LANDLORD', 'AGENT', 'ADMIN'],
+    slaHours: 24,
+    deliverableBadge: 'Landlord UAE PASS Signed',
+  },
+  {
+    stage: 4,
+    code: 'CONTRACT_AND_PAYMENTS',
+    title: 'Stage 4 · Unified Tenancy Contract & PDC Vault / UAEDDS Mandate',
+    shortTitle: '4. Contract & Cheques',
+    description: 'DLD Unified Tenancy Contract signed by both parties; Post-Dated Cheques vaulted or UAEDDS monthly debit active.',
+    allowedRolesToAdvance: ['TENANT', 'LANDLORD', 'AGENT', 'ADMIN'],
+    slaHours: 12,
+    deliverableBadge: 'Contract + UAEDDS / PDC Cleared',
+  },
+  {
+    stage: 5,
+    code: 'EJARI_TAWTHEEQ_ISSUED',
+    title: 'Stage 5 · Official DLD Ejari / Tawtheeq Certificate & Commission Split',
+    shortTitle: '5. Ejari Issued',
+    description: 'Official Ejari / Tawtheeq registered online; commission split (50/50 or 50/25/25 A2A) locked in SWK OS ledger.',
+    allowedRolesToAdvance: ['AGENT', 'LANDLORD', 'ADMIN'],
+    slaHours: 6,
+    deliverableBadge: 'Official Ejari Certificate PDF',
+  },
+  {
+    stage: 6,
+    code: 'DEWA_CHILLER_AND_SNAGGING',
+    title: 'Stage 6 · DEWA + Empower/Tabreed Auto-Activation & 50-Pt Snagging',
+    shortTitle: '6. DEWA & Snagging',
+    description: 'DEWA & district cooling auto-triggered from Ejari; 50-point timestamped move-in snagging photo vault locked.',
+    allowedRolesToAdvance: ['TENANT', 'AGENT', 'ADMIN'],
+    slaHours: 12,
+    deliverableBadge: 'DEWA Active + 50-Pt Snagging Vault',
+  },
+  {
+    stage: 7,
+    code: 'MOVE_IN_NOC_AND_KEYS',
+    title: 'Stage 7 · Building OA Digital Move-In Gate Pass & Key Handover',
+    shortTitle: '7. Move-In & Keys',
+    description: 'Building security QR Move-In NOC issued for moving truck; physical keys or master smart-lock code handed over.',
+    allowedRolesToAdvance: ['AGENT', 'LANDLORD', 'ADMIN'],
+    slaHours: 4,
+    deliverableBadge: 'Move-In QR Gate Pass + Keys Handed Over',
+  },
+]
+
+export interface RentalDealWorkflow {
+  id: number
+  workflowCode: string
+  unitId: number
+  unitCode: string
+  buildingName: string
+  unitNo: string
+  tenantName: string
+  tenantEmail: string
+  landlordName: string
+  advisorName: string
+  supplyTier: SupplyTier
+  annualRentAed: number
+  chequeOption: ChequeOption
+  currentStage: number // 1..7
+  status: 'IN_PROGRESS' | 'COMPLETED_ACTIVE_LEASE'
+  ejariOrTawtheeqNo: string
+  gatePassCode: string
+  snaggingScore: number
+  swkCompanyShareAed: number
+  swkAdvisorShareAed: number
+  a2aPartnerShareAed: number
+  stageHistory: {
+    stage: number
+    code: string
+    completedByRole: UserRole
+    completedByName: string
+    completedAt: string
+    note: string
+  }[]
+  updatedAt: string
+}
+
+export function canRoleAdvanceWorkflowStage(role: UserRole, targetStage: number): {
+  allowed: boolean
+  reason?: string
+} {
+  const def = UAE_RENTAL_WORKFLOW_STAGES.find(s => s.stage === targetStage)
+  if (!def) return { allowed: false, reason: 'Invalid workflow stage.' }
+  if (def.allowedRolesToAdvance.includes(role)) {
+    return { allowed: true }
+  }
+  return {
+    allowed: false,
+    reason: `Role "${role}" cannot sign off "${def.shortTitle}". Required role: ${def.allowedRolesToAdvance.join(' or ')}.`,
+  }
+}

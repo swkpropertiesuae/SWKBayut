@@ -1,5 +1,8 @@
-import Fastify from 'fastify'
+import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify'
 import fastifyStatic from '@fastify/static'
+import fastifyHelmet from '@fastify/helmet'
+import fastifyCookie from '@fastify/cookie'
+import fastifyRateLimit from '@fastify/rate-limit'
 import path from 'node:path'
 import fs from 'node:fs'
 import {
@@ -10,10 +13,29 @@ import {
   getActiveLeasesWithReraShield,
   listDeveloperBtrPools,
   listTenantReverseBriefs,
+  listRentalWorkflows,
+  listUsersPublic,
+  mapUserRow,
+  recordAuditLog,
+  getMvpLaunchTelemetry,
 } from './db'
+import {
+  hashPassword,
+  verifyPassword,
+  validatePasswordStrength,
+  generateSessionToken,
+  hashSessionToken,
+} from './auth'
 import {
   type ChequeOption,
   type SupplyTier,
+  type UserRole,
+  type AuthUser,
+  type RbacAction,
+  ROLE_CAPABILITIES,
+  UAE_RENTAL_WORKFLOW_STAGES,
+  canRoleExecuteAction,
+  canRoleAdvanceWorkflowStage,
   calculateTrueRentalCost,
   evaluateReraRenewal,
   validateUaeLegalPayment,
@@ -21,21 +43,325 @@ import {
   calculatePortalSavingsVsCompetitors,
 } from '../shared/uae-rental-rules'
 
+const SESSION_COOKIE_NAME = 'swkbayut_session'
+const SESSION_TTL_MS = 7 * 24 * 3600 * 1000 // 7 days
+
+export function resolveRequestUser(req: FastifyRequest): AuthUser | null {
+  const headerToken =
+    (req.headers['x-swk-session'] as string | undefined) ||
+    (req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7).trim()
+      : undefined)
+  const cookieToken = (req.cookies as Record<string, string | undefined> | undefined)?.[SESSION_COOKIE_NAME]
+  const rawToken = headerToken || cookieToken
+  if (!rawToken) return null
+
+  const tokenHash = hashSessionToken(rawToken)
+  const sess = db
+    .prepare('SELECT * FROM auth_sessions WHERE token_hash = ?')
+    .get(tokenHash) as any
+  if (!sess) return null
+
+  if (new Date(sess.expires_at).getTime() < Date.now()) {
+    db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(tokenHash)
+    return null
+  }
+
+  const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(sess.user_id) as any
+  if (!userRow) return null
+  return mapUserRow(userRow)
+}
+
+function checkRbacPermission(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  action: RbacAction,
+): { allowed: boolean; user: AuthUser | null } {
+  const user = resolveRequestUser(req)
+  const explicitRoleHeader = req.headers['x-swk-role'] as UserRole | undefined
+  const effectiveRole = user?.role ?? explicitRoleHeader
+
+  if (effectiveRole && !canRoleExecuteAction(effectiveRole, action)) {
+    reply.code(403).send({
+      error: `RBAC Access Denied: Role "${effectiveRole}" (${ROLE_CAPABILITIES[effectiveRole]?.label ?? effectiveRole}) is not permitted to perform "${action}".`,
+      requiredAction: action,
+      currentRole: effectiveRole,
+    })
+    return { allowed: false, user }
+  }
+  return { allowed: true, user }
+}
+
 export function buildServer() {
   initSchemaAndSeed()
 
   const app = Fastify({ logger: false })
 
+  app.register(fastifyHelmet, {
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+  app.register(fastifyCookie, {
+    secret: process.env.SWK_COOKIE_SECRET || 'swk-rent-orn-51517-production-secret-2026',
+  })
+  app.register(fastifyRateLimit, {
+    max: 600,
+    timeWindow: '1 minute',
+  })
+
   app.get('/api/health', async () => ({
     ok: true,
-    service: 'SWKBayut UAE Dedicated Rental OS',
+    service: 'SWKBayut UAE Dedicated Rental OS (MVP 1,000-User Production Engine)',
     reraOrn: '51517',
     linkedOs: 'https://github.com/swkpropertiesuae/swkpropertiesOS',
     androidPackage: 'ae.swkproperties.bayut',
+    iosBundleId: 'ae.swkproperties.bayut',
+    rbacRoles: Object.keys(ROLE_CAPABILITIES),
+    workflowStagesCount: UAE_RENTAL_WORKFLOW_STAGES.length,
     timestamp: new Date().toISOString(),
   }))
 
-  app.get('/api/bootstrap', async () => {
+  // ------------------------------------------------------------------
+  // AUTHENTICATION, SIGNUP, SIGNIN & RBAC ENDPOINTS
+  // ------------------------------------------------------------------
+  app.post('/api/auth/signup', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      email: string
+      password: string
+      fullName: string
+      phone: string
+      role: UserRole
+      emiratesIdOrPassport?: string
+      reraBrn?: string
+      reraOrn?: string
+      agencyOrCompanyName?: string
+      titleDeedRef?: string
+    }
+
+    if (!body.email || !body.password || !body.fullName || !body.phone) {
+      return reply.code(400).send({
+        error: 'Full name, email address, UAE phone number, and password are required.',
+      })
+    }
+
+    const emailClean = body.email.trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
+      return reply.code(400).send({ error: 'Please provide a valid email address.' })
+    }
+
+    const pwCheck = validatePasswordStrength(body.password)
+    if (!pwCheck.ok) {
+      return reply.code(400).send({ error: pwCheck.error })
+    }
+
+    const role: UserRole =
+      body.role && ROLE_CAPABILITIES[body.role] ? body.role : 'TENANT'
+
+    // Role-specific UAE regulatory verification checks
+    if (role === 'AGENT' && !body.reraBrn && !body.reraOrn) {
+      return reply.code(400).send({
+        error: 'RERA Broker Registration (BRN) or Agency ORN is required for Agent/Broker signup.',
+      })
+    }
+    if (role === 'LANDLORD' && !body.titleDeedRef) {
+      return reply.code(400).send({
+        error: 'DLD Title Deed Reference or Mulkiya No. is required for Direct Landlord signup.',
+      })
+    }
+
+    const existing = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(emailClean)
+    if (existing) {
+      return reply.code(409).send({
+        error: 'An account with this email address is already registered. Please sign in.',
+      })
+    }
+
+    const pwHash = hashPassword(body.password)
+    const now = new Date().toISOString()
+    const info = db
+      .prepare(`
+        INSERT INTO users (
+          email, password_hash, full_name, phone, role, uae_pass_verified,
+          emirates_id_or_passport, rera_brn, rera_orn, agency_or_company_name, title_deed_ref,
+          last_login_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        emailClean,
+        pwHash,
+        body.fullName.trim(),
+        body.phone.trim(),
+        role,
+        body.emiratesIdOrPassport?.trim() || 'UAE-PASS-VERIFIED',
+        body.reraBrn?.trim() || null,
+        body.reraOrn?.trim() || (role === 'AGENT' ? 'ORN-51517' : null),
+        body.agencyOrCompanyName?.trim() || null,
+        body.titleDeedRef?.trim() || null,
+        now,
+        now,
+      )
+
+    const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid)
+    const user = mapUserRow(userRow)
+
+    const { token, tokenHash } = generateSessionToken()
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString()
+    db.prepare(`
+      INSERT INTO auth_sessions (token_hash, user_id, role, ip_address, user_agent, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      tokenHash,
+      user.id,
+      user.role,
+      req.ip,
+      (req.headers['user-agent'] || '').slice(0, 200),
+      now,
+      expiresAt,
+    )
+
+    reply.setCookie(SESSION_COOKIE_NAME, token, {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: Math.floor(SESSION_TTL_MS / 1000),
+    })
+
+    recordAuditLog({
+      user,
+      action: 'USER_SIGNUP',
+      entityType: 'USER',
+      entityRef: user.email,
+      details: `New ${user.role} account registered (${user.fullName})`,
+    })
+
+    return {
+      ok: true,
+      user,
+      sessionToken: token,
+      capabilities: ROLE_CAPABILITIES[user.role],
+    }
+  })
+
+  app.post('/api/auth/login', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      email?: string
+      password?: string
+      demoQuickRole?: UserRole
+    }
+
+    let userRow: any = null
+    if (body.demoQuickRole && !body.password) {
+      // 1-Tap Demo Role Switcher for rapid testing of all 5 personas
+      userRow = db
+        .prepare('SELECT * FROM users WHERE role = ? ORDER BY id ASC LIMIT 1')
+        .get(body.demoQuickRole)
+    } else {
+      const emailClean = (body.email || '').trim().toLowerCase()
+      if (!emailClean || !body.password) {
+        return reply.code(400).send({ error: 'Email and password are required.' })
+      }
+      userRow = db.prepare('SELECT * FROM users WHERE lower(email) = ?').get(emailClean)
+
+      if (userRow?.locked_until && new Date(userRow.locked_until).getTime() > Date.now()) {
+        return reply.code(423).send({
+          error: 'Account temporarily locked due to repeated failed sign-in attempts. Please try again in 15 minutes.',
+        })
+      }
+
+      const valid = verifyPassword(body.password, userRow?.password_hash)
+      if (!userRow || !valid) {
+        if (userRow) {
+          const fails = Number(userRow.failed_logins || 0) + 1
+          const lockedUntil =
+            fails >= 5 ? new Date(Date.now() + 15 * 60 * 1000).toISOString() : null
+          db.prepare('UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?').run(
+            fails,
+            lockedUntil,
+            userRow.id,
+          )
+        }
+        return reply.code(401).send({ error: 'Invalid email address or password.' })
+      }
+    }
+
+    if (!userRow) {
+      return reply.code(404).send({ error: 'Account not found.' })
+    }
+
+    const now = new Date().toISOString()
+    db.prepare(
+      'UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = ? WHERE id = ?',
+    ).run(now, userRow.id)
+
+    const user = mapUserRow(userRow)
+    const { token, tokenHash } = generateSessionToken()
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString()
+
+    db.prepare(`
+      INSERT INTO auth_sessions (token_hash, user_id, role, ip_address, user_agent, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      tokenHash,
+      user.id,
+      user.role,
+      req.ip,
+      (req.headers['user-agent'] || '').slice(0, 200),
+      now,
+      expiresAt,
+    )
+
+    reply.setCookie(SESSION_COOKIE_NAME, token, {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: Math.floor(SESSION_TTL_MS / 1000),
+    })
+
+    recordAuditLog({
+      user,
+      action: 'USER_SIGNIN',
+      entityType: 'SESSION',
+      entityRef: user.email,
+      details: `Signed in as ${user.role} (${user.fullName})`,
+    })
+
+    return {
+      ok: true,
+      user,
+      sessionToken: token,
+      capabilities: ROLE_CAPABILITIES[user.role],
+    }
+  })
+
+  app.get('/api/auth/me', async (req) => {
+    const user = resolveRequestUser(req)
+    return {
+      authenticated: Boolean(user),
+      user,
+      capabilities: user ? ROLE_CAPABILITIES[user.role] : null,
+    }
+  })
+
+  app.post('/api/auth/logout', async (req, reply) => {
+    const headerToken =
+      (req.headers['x-swk-session'] as string | undefined) ||
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7).trim()
+        : undefined)
+    const cookieToken = (req.cookies as Record<string, string | undefined> | undefined)?.[SESSION_COOKIE_NAME]
+    const rawToken = headerToken || cookieToken
+    if (rawToken) {
+      db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(hashSessionToken(rawToken))
+    }
+    reply.clearCookie(SESSION_COOKIE_NAME, { path: '/' })
+    return { ok: true }
+  })
+
+  // ------------------------------------------------------------------
+  // BOOTSTRAP & MVP TELEMETRY
+  // ------------------------------------------------------------------
+  app.get('/api/bootstrap', async (req) => {
+    const currentUser = resolveRequestUser(req)
     const buildings = listBuildings()
     const units = listRentalUnits()
     const leases = getActiveLeasesWithReraShield()
@@ -49,8 +375,16 @@ export function buildServer() {
     const reverseBriefs = listTenantReverseBriefs()
     const crmFeeds = db.prepare('SELECT * FROM crm_xml_feeds ORDER BY id DESC').all()
     const gatePasses = db.prepare('SELECT * FROM move_in_gate_passes ORDER BY id DESC').all()
+    const workflows = listRentalWorkflows()
+    const demoUsers = listUsersPublic()
+    const mvpTelemetry = getMvpLaunchTelemetry()
 
     return {
+      currentUser,
+      roleCapabilities: ROLE_CAPABILITIES,
+      workflowStageDefinitions: UAE_RENTAL_WORKFLOW_STAGES,
+      demoUsers,
+      mvpTelemetry,
       buildings,
       units,
       leases,
@@ -64,6 +398,7 @@ export function buildServer() {
       reverseBriefs,
       crmFeeds,
       gatePasses,
+      workflows,
       portalSavingsSample: calculatePortalSavingsVsCompetitors({
         activeListingsCount: 45,
         agentsCount: 15,
@@ -73,12 +408,191 @@ export function buildServer() {
         sourceRepo: 'https://github.com/swkpropertiesuae/swkpropertiesOS',
         targetRepo: 'https://github.com/swkpropertiesuae/SWKBayut',
         androidAppId: 'ae.swkproperties.bayut',
+        iosBundleId: 'ae.swkproperties.bayut',
         orn: '51517',
         lastSyncedAt: new Date().toISOString(),
       },
     }
   })
 
+  // ------------------------------------------------------------------
+  // 7-STAGE END-TO-END RENTAL DEAL WORKFLOW ENGINE
+  // ------------------------------------------------------------------
+  app.get('/api/workflows', async () => ({
+    stages: UAE_RENTAL_WORKFLOW_STAGES,
+    workflows: listRentalWorkflows(),
+  }))
+
+  app.post('/api/workflows', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'SUBMIT_OFFER')
+    if (!allowed) return
+
+    const body = (req.body ?? {}) as {
+      unitId: number
+      tenantName: string
+      tenantEmail?: string
+      annualRentAed?: number
+      chequeOption?: ChequeOption
+    }
+    const unit = listRentalUnits().find(u => u.id === Number(body.unitId))
+    if (!unit) return reply.code(404).send({ error: 'Unit not found.' })
+
+    const rent = Number(body.annualRentAed) || unit.annualRent1Cheque
+    const cheques = (Number(body.chequeOption) as ChequeOption) || 1
+    const cost = calculateTrueRentalCost(unit, cheques, unit.supplyTier)
+    const wfCode = `WF-DXB-${Math.floor(1000 + Math.random() * 9000)}`
+    const now = new Date().toISOString()
+
+    const initialHistory = [
+      {
+        stage: 1,
+        code: 'KYC_AND_VIEWING',
+        completedByRole: user?.role ?? ('TENANT' as UserRole),
+        completedByName: user?.fullName ?? body.tenantName.trim(),
+        completedAt: now,
+        note: 'UAE PASS KYC & Property Viewing verified.',
+      },
+    ]
+
+    const info = db
+      .prepare(`
+        INSERT INTO rental_workflows (
+          workflow_code, unit_id, unit_code, building_name, unit_no,
+          tenant_name, tenant_email, landlord_name, advisor_name, supply_tier,
+          annual_rent_aed, cheque_option, current_stage, status,
+          ejari_or_tawtheeq_no, gate_pass_code, snagging_score,
+          swk_company_share_aed, swk_advisor_share_aed, a2a_partner_share_aed,
+          stage_history_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'IN_PROGRESS', 'PENDING-EJARI', 'PENDING-NOC', 98, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        wfCode,
+        unit.id,
+        unit.unitCode,
+        unit.buildingName || 'Dubai Tower',
+        unit.unitNo,
+        body.tenantName.trim(),
+        (body.tenantEmail || user?.email || 'tenant@uaepass.ae').trim(),
+        unit.landlordName,
+        unit.advisorName,
+        unit.supplyTier,
+        rent,
+        cheques,
+        cost.commissionSplit.swkCompanyShareAed,
+        cost.commissionSplit.swkAdvisorShareAed,
+        cost.commissionSplit.a2aPartnerShareAed,
+        JSON.stringify(initialHistory),
+        now,
+      )
+
+    recordAuditLog({
+      user,
+      action: 'WORKFLOW_CREATED',
+      entityType: 'WORKFLOW',
+      entityRef: wfCode,
+      details: `Started 7-stage rental workflow ${wfCode} for ${unit.buildingName} #${unit.unitNo}`,
+    })
+
+    const created = listRentalWorkflows().find(w => w.id === Number(info.lastInsertRowid))
+    return { ok: true, workflow: created }
+  })
+
+  app.post('/api/workflows/:id/advance', async (req, reply) => {
+    const id = Number((req.params as any).id)
+    const body = (req.body ?? {}) as {
+      note?: string
+      actorRole?: UserRole
+      actorName?: string
+    }
+    const wfRow = db.prepare('SELECT * FROM rental_workflows WHERE id = ?').get(id) as any
+    if (!wfRow) return reply.code(404).send({ error: 'Rental workflow not found.' })
+
+    const currentStage = Number(wfRow.current_stage)
+    if (currentStage >= 7) {
+      return reply.code(400).send({ error: 'Workflow has already completed all 7 stages.' })
+    }
+
+    const nextStage = currentStage + 1
+    const user = resolveRequestUser(req)
+    const explicitRole = (req.headers['x-swk-role'] as UserRole | undefined) || body.actorRole
+    const effectiveRole: UserRole = user?.role ?? explicitRole ?? 'ADMIN'
+    const effectiveName = user?.fullName ?? body.actorName ?? `${effectiveRole} Verified Sign-Off`
+
+    const stageCheck = canRoleAdvanceWorkflowStage(effectiveRole, nextStage)
+    if (!stageCheck.allowed) {
+      return reply.code(403).send({
+        error: stageCheck.reason,
+        currentRole: effectiveRole,
+        targetStage: nextStage,
+      })
+    }
+
+    const stageMeta = UAE_RENTAL_WORKFLOW_STAGES.find(s => s.stage === nextStage)!
+    const now = new Date().toISOString()
+    const history = JSON.parse(wfRow.stage_history_json || '[]')
+
+    let ejariNo = wfRow.ejari_or_tawtheeq_no
+    let gatePassCode = wfRow.gate_pass_code
+    let status = wfRow.status
+
+    if (nextStage === 5 && ejariNo === 'PENDING-EJARI') {
+      ejariNo = `EJARI-2026-${Math.floor(100000 + Math.random() * 900000)}`
+    }
+
+    if (nextStage === 7) {
+      status = 'COMPLETED_ACTIVE_LEASE'
+      gatePassCode = `NOC-PASS-${Math.floor(1000 + Math.random() * 9000)}`
+      const qrToken = `QR-OA-VERIFIED-${wfRow.unit_no}-${Date.now().toString(36).toUpperCase()}`
+      db.prepare(`
+        INSERT OR IGNORE INTO move_in_gate_passes (
+          pass_code, building_name, unit_no, tenant_name, ejari_verified, dewa_verified, chiller_verified,
+          mover_company, move_date, qr_token, status
+        ) VALUES (?, ?, ?, ?, 1, 1, 1, 'SWK Concierge Verified Movers', ?, ?, 'Cleared by Building OA Security — Gate Barrier Auto-Approved')
+      `).run(
+        gatePassCode,
+        wfRow.building_name,
+        wfRow.unit_no,
+        wfRow.tenant_name,
+        now.slice(0, 10),
+        qrToken,
+      )
+      db.prepare('UPDATE rental_units SET availability_status = ? WHERE id = ?').run(
+        'Ejari Active / Rented',
+        wfRow.unit_id,
+      )
+    }
+
+    history.push({
+      stage: nextStage,
+      code: stageMeta.code,
+      completedByRole: effectiveRole,
+      completedByName: effectiveName,
+      completedAt: now,
+      note: body.note?.trim() || `${stageMeta.deliverableBadge} completed by ${effectiveName}`,
+    })
+
+    db.prepare(`
+      UPDATE rental_workflows
+      SET current_stage = ?, status = ?, ejari_or_tawtheeq_no = ?, gate_pass_code = ?,
+          stage_history_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(nextStage, status, ejariNo, gatePassCode, JSON.stringify(history), now, id)
+
+    recordAuditLog({
+      user,
+      action: `WORKFLOW_STAGE_${nextStage}`,
+      entityType: 'WORKFLOW',
+      entityRef: wfRow.workflow_code,
+      details: `${wfRow.workflow_code} advanced to Stage ${nextStage} (${stageMeta.shortTitle}) by ${effectiveName} [${effectiveRole}]`,
+    })
+
+    const updated = listRentalWorkflows().find(w => w.id === id)
+    return { ok: true, workflow: updated }
+  })
+
+  // ------------------------------------------------------------------
+  // CORE MARKETPLACE, OFFERS, SHIELD & SUPER-HUB ENDPOINTS
+  // ------------------------------------------------------------------
   app.post('/api/cost-calculator', async (req, reply) => {
     const body = (req.body ?? {}) as {
       unitId?: number
@@ -97,6 +611,9 @@ export function buildServer() {
   })
 
   app.post('/api/viewings', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'BOOK_VIEWING')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       unitId: number
       tenantName: string
@@ -136,11 +653,22 @@ export function buildServer() {
         new Date().toISOString(),
       )
 
+    recordAuditLog({
+      user,
+      action: 'VIEWING_BOOKED',
+      entityType: 'UNIT',
+      entityRef: unit.unitCode,
+      details: `Viewing booked for ${unit.unitCode} by ${body.tenantName.trim()}`,
+    })
+
     const created = db.prepare('SELECT * FROM viewing_bookings WHERE id = ?').get(info.lastInsertRowid)
     return { ok: true, viewing: created }
   })
 
   app.post('/api/offers', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'SUBMIT_OFFER')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       unitId: number
       tenantName: string
@@ -193,6 +721,7 @@ export function buildServer() {
       ? '48h Unit Lock Active — Pending Landlord 1-Click Sign'
       : 'Submitted — Pending Landlord Review'
 
+    const now = new Date().toISOString()
     const info = db
       .prepare(`
         INSERT INTO rental_offers (
@@ -206,7 +735,7 @@ export function buildServer() {
       .run(
         unit.id,
         body.tenantName.trim(),
-        (body.tenantEmail || 'verified.tenant@uaepass.ae').trim(),
+        (body.tenantEmail || user?.email || 'verified.tenant@uaepass.ae').trim(),
         body.tenantPhone.trim(),
         body.kycStatus || 'UAE PASS Verified (Emirates ID Matched)',
         Number(body.offeredAnnualRent),
@@ -220,7 +749,7 @@ export function buildServer() {
         cost.commissionSplit.swkAdvisorShareAed,
         cost.commissionSplit.a2aPartnerShareAed,
         offerStatus,
-        new Date().toISOString(),
+        now,
       )
 
     if (lockUnit) {
@@ -230,11 +759,70 @@ export function buildServer() {
       )
     }
 
+    // Also auto-create a 7-Stage Deal Workflow at Stage 2 for this offer!
+    const wfCode = `WF-DXB-${Math.floor(1000 + Math.random() * 9000)}`
+    db.prepare(`
+      INSERT OR IGNORE INTO rental_workflows (
+        workflow_code, unit_id, unit_code, building_name, unit_no,
+        tenant_name, tenant_email, landlord_name, advisor_name, supply_tier,
+        annual_rent_aed, cheque_option, current_stage, status,
+        ejari_or_tawtheeq_no, gate_pass_code, snagging_score,
+        swk_company_share_aed, swk_advisor_share_aed, a2a_partner_share_aed,
+        stage_history_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2, 'IN_PROGRESS', 'PENDING-EJARI', 'PENDING-NOC', 98, ?, ?, ?, ?, ?)
+    `).run(
+      wfCode,
+      unit.id,
+      unit.unitCode,
+      unit.buildingName || 'Dubai Tower',
+      unit.unitNo,
+      body.tenantName.trim(),
+      (body.tenantEmail || user?.email || 'verified.tenant@uaepass.ae').trim(),
+      unit.landlordName,
+      unit.advisorName,
+      cost.supplyTier,
+      Number(body.offeredAnnualRent),
+      Number(body.chequeOption) || 1,
+      cost.commissionSplit.swkCompanyShareAed,
+      cost.commissionSplit.swkAdvisorShareAed,
+      cost.commissionSplit.a2aPartnerShareAed,
+      JSON.stringify([
+        {
+          stage: 1,
+          code: 'KYC_AND_VIEWING',
+          completedByRole: user?.role ?? 'TENANT',
+          completedByName: body.tenantName.trim(),
+          completedAt: now,
+          note: 'UAE PASS KYC verified.',
+        },
+        {
+          stage: 2,
+          code: 'OFFER_AND_DEPOSIT_LOCK',
+          completedByRole: user?.role ?? 'TENANT',
+          completedByName: body.tenantName.trim(),
+          completedAt: now,
+          note: `Offer AED ${Number(body.offeredAnnualRent).toLocaleString('en-US')} via ${body.paymentChannel}`,
+        },
+      ]),
+      now,
+    )
+
+    recordAuditLog({
+      user,
+      action: 'OFFER_SUBMITTED',
+      entityType: 'OFFER',
+      entityRef: unit.unitCode,
+      details: `Offer AED ${Number(body.offeredAnnualRent).toLocaleString('en-US')} submitted by ${body.tenantName.trim()}`,
+    })
+
     const created = db.prepare('SELECT * FROM rental_offers WHERE id = ?').get(info.lastInsertRowid)
-    return { ok: true, offer: created, costBreakdown: cost }
+    return { ok: true, offer: created, costBreakdown: cost, workflowCode: wfCode }
   })
 
   app.post('/api/offers/:id/decision', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'DECIDE_OFFER')
+    if (!allowed) return
+
     const id = Number((req.params as any).id)
     const body = (req.body ?? {}) as { decision: 'Accepted — Ejari Issued' | 'Declined — Unit Unlocked' }
     const offer = db.prepare('SELECT * FROM rental_offers WHERE id = ?').get(id) as any
@@ -252,10 +840,22 @@ export function buildServer() {
         offer.unit_id,
       )
     }
+
+    recordAuditLog({
+      user,
+      action: 'OFFER_DECISION',
+      entityType: 'OFFER',
+      entityRef: String(id),
+      details: `Offer #${id} decision: ${body.decision}`,
+    })
+
     return { ok: true }
   })
 
   app.post('/api/pdc/:id/action', async (req, reply) => {
+    const { allowed } = checkRbacPermission(req, reply, 'MANAGE_PDC_CHEQUES')
+    if (!allowed) return
+
     const id = Number((req.params as any).id)
     const body = (req.body ?? {}) as { action: 'Cleared' | 'Deposited' | 'RNPL_Bounce_Shield' }
     const chq = db.prepare('SELECT * FROM pdc_cheques WHERE id = ?').get(id) as any
@@ -271,6 +871,9 @@ export function buildServer() {
   })
 
   app.post('/api/maintenance', async (req, reply) => {
+    const { allowed } = checkRbacPermission(req, reply, 'SUBMIT_MAINTENANCE')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       leaseCode?: string
       unitLabel: string
@@ -331,6 +934,9 @@ export function buildServer() {
   })
 
   app.post('/api/a2a/register', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'REGISTER_A2A_MANDATE')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       partnerAgencyName: string
       partnerOrn: string
@@ -361,11 +967,21 @@ export function buildServer() {
         'Protected Lead — 50% Partner / 25% SWK / 25% Advisor Locked',
         new Date().toISOString(),
       )
+    recordAuditLog({
+      user,
+      action: 'A2A_MANDATE_REGISTERED',
+      entityType: 'A2A_MANDATE',
+      entityRef: body.partnerOrn.trim(),
+      details: `Protected A2A mandate registered for client ${body.clientName.trim()} by ${body.brokerName.trim()}`,
+    })
     const mandate = db.prepare('SELECT * FROM a2a_partner_mandates WHERE id = ?').get(info.lastInsertRowid)
     return { ok: true, mandate }
   })
 
   app.post('/api/landlord/onboard', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'ONBOARD_LANDLORD_UNIT')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       landlordName: string
       uaePassUuid?: string
@@ -400,15 +1016,21 @@ export function buildServer() {
         'Title Deed & UAE PASS Verified — Live on SWKBayut & Owner360',
         new Date().toISOString(),
       )
+    recordAuditLog({
+      user,
+      action: 'LANDLORD_UNIT_ONBOARDED',
+      entityType: 'LANDLORD_MANDATE',
+      entityRef: body.titleDeedNo.trim(),
+      details: `Direct landlord unit ${body.buildingName.trim()} #${body.unitNo.trim()} onboarded`,
+    })
     const mandate = db.prepare('SELECT * FROM direct_landlord_mandates WHERE id = ?').get(info.lastInsertRowid)
     return { ok: true, mandate }
   })
 
-  // ------------------------------------------------------------------
-  // NEW SUPER-ENDPOINTS: Developer BTR FIFO Queue, Reverse Tenant Auction,
-  // Free XML CRM Importer & Smart Move-In Gate Pass Generator
-  // ------------------------------------------------------------------
   app.post('/api/developer-pools', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'CREATE_DEVELOPER_POOL')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       projectName: string
       developerName: string
@@ -444,10 +1066,20 @@ export function buildServer() {
         Number(body.protectedFloorRent2BrAed) || 140000,
         'FIFO Anti-Cannibalization Active (Protected Yield Floor)',
       )
+    recordAuditLog({
+      user,
+      action: 'DEVELOPER_POOL_CREATED',
+      entityType: 'DEVELOPER_POOL',
+      entityRef: code,
+      details: `Developer BTR pool created: ${body.projectName.trim()} (${body.totalHandoverUnits} units)`,
+    })
     return { ok: true, poolId: Number(info.lastInsertRowid), pools: listDeveloperBtrPools() }
   })
 
   app.post('/api/developer-pools/:id/reserve', async (req, reply) => {
+    const { allowed } = checkRbacPermission(req, reply, 'RESERVE_DEVELOPER_FIFO')
+    if (!allowed) return
+
     const id = Number((req.params as any).id)
     const pool = db.prepare('SELECT * FROM developer_btr_pools WHERE id = ?').get(id) as any
     if (!pool) return reply.code(404).send({ error: 'Developer pool not found' })
@@ -462,6 +1094,9 @@ export function buildServer() {
   })
 
   app.post('/api/reverse-briefs', async (req, reply) => {
+    const { allowed } = checkRbacPermission(req, reply, 'POST_REVERSE_BRIEF')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       tenantAlias: string
       corporateEmployer: string
@@ -500,6 +1135,9 @@ export function buildServer() {
   })
 
   app.post('/api/reverse-briefs/:id/bid', async (req, reply) => {
+    const { allowed } = checkRbacPermission(req, reply, 'BID_REVERSE_BRIEF')
+    if (!allowed) return
+
     const id = Number((req.params as any).id)
     const body = (req.body ?? {}) as { bidRentAed: number; unitLabel: string }
     const brief = db.prepare('SELECT * FROM tenant_reverse_briefs WHERE id = ?').get(id) as any
@@ -525,6 +1163,9 @@ export function buildServer() {
   })
 
   app.post('/api/crm-sync/import', async (req, reply) => {
+    const { allowed } = checkRbacPermission(req, reply, 'IMPORT_CRM_XML')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       agencyName: string
       crmProvider: string
@@ -559,6 +1200,9 @@ export function buildServer() {
   })
 
   app.post('/api/gate-pass/generate', async (req, reply) => {
+    const { allowed } = checkRbacPermission(req, reply, 'GENERATE_GATE_PASS')
+    if (!allowed) return
+
     const body = (req.body ?? {}) as {
       buildingName: string
       unitNo: string

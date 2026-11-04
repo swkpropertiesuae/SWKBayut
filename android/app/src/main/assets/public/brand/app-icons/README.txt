@@ -1,0 +1,1 @@
+Choose Emblem_and_SWK or SWK_Wordmark. Each folder contains an iOS Xcode app icon catalog and Android resources, including a Google Play PNG. Preview masks illustrate the home-screen appearance. The assets use the existing raster SWK artwork.

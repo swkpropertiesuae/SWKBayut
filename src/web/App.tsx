@@ -38,13 +38,19 @@ import {
   type RentalUnit,
   type SupplyTier,
   type VerifiedTenantBrief,
+  type UserRole,
+  type AuthUser,
+  type RentalDealWorkflow,
   PERMITTED_UAE_RENTAL_PAYMENT_CHANNELS,
+  ROLE_CAPABILITIES,
+  UAE_RENTAL_WORKFLOW_STAGES,
+  canRoleAdvanceWorkflowStage,
   calculatePortalSavingsVsCompetitors,
   calculateTrueRentalCost,
   evaluateReraRenewal,
 } from '@shared/uae-rental-rules'
 
-type ActiveTab = 'marketplace' | 'buildings' | 'superhub' | 'shield' | 'partners'
+type ActiveTab = 'marketplace' | 'buildings' | 'superhub' | 'workflow' | 'shield' | 'partners'
 
 const aed = (n: number) => `AED ${Math.round(n || 0).toLocaleString('en-US')}`
 
@@ -79,6 +85,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('marketplace')
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<{
+    currentUser: AuthUser | null
+    demoUsers: AuthUser[]
+    mvpTelemetry: any
+    workflows: RentalDealWorkflow[]
     buildings: BuildingProfile[]
     units: RentalUnit[]
     leases: any[]
@@ -94,6 +104,40 @@ export default function App() {
     gatePasses: any[]
     osBridge: any
   } | null>(null)
+
+  // Auth, RBAC & Session State
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
+  const [sessionToken, setSessionToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('swkbayut_session_token')
+    } catch {
+      return null
+    }
+  })
+  const [activeRole, setActiveRole] = useState<UserRole>('TENANT')
+  const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
+  const [loginEmail, setLoginEmail] = useState('tenant@uaepass.ae')
+  const [loginPassword, setLoginPassword] = useState('SwkRent2026!')
+
+  // Signup Form State
+  const [signupFullName, setSignupFullName] = useState('')
+  const [signupEmail, setSignupEmail] = useState('')
+  const [signupPhone, setSignupPhone] = useState('+971 50 ')
+  const [signupPassword, setSignupPassword] = useState('SwkRent2026!')
+  const [signupRole, setSignupRole] = useState<UserRole>('TENANT')
+  const [signupEmiratesId, setSignupEmiratesId] = useState('784-1995-4810291-1')
+  const [signupReraBrn, setSignupReraBrn] = useState('BRN-62109')
+  const [signupReraOrn, setSignupReraOrn] = useState('ORN-51517')
+  const [signupCompany, setSignupCompany] = useState('SWK Properties L.L.C.')
+  const [signupTitleDeed, setSignupTitleDeed] = useState('TD-DXB-2026-44109')
+
+  // 7-Stage Deal Workflow New Deal & Icon Variant State
+  const [wfUnitId, setWfUnitId] = useState(1)
+  const [wfTenantName, setWfTenantName] = useState('Layla Al Qasimi')
+  const [wfAnnualRent, setWfAnnualRent] = useState(125000)
+  const [wfCheques, setWfCheques] = useState<ChequeOption>(2)
+  const [appIconVariant, setAppIconVariant] = useState<'emblem' | 'wordmark'>('emblem')
 
   // Marketplace Filters & Live Payment Mode
   const [searchQuery, setSearchQuery] = useState('')
@@ -195,11 +239,25 @@ export default function App() {
     setTimeout(() => setToast(null), 5500)
   }
 
-  const refreshData = async () => {
+  const apiFetch = async (url: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers || {})
+    if (sessionToken) headers.set('x-swk-session', sessionToken)
+    headers.set('x-swk-role', currentUser?.role ?? activeRole)
+    return fetch(url, { ...init, headers })
+  }
+
+  const refreshData = async (overrideToken?: string | null) => {
     try {
-      const res = await fetch('/api/bootstrap')
+      const headers: Record<string, string> = {}
+      const tok = overrideToken !== undefined ? overrideToken : sessionToken
+      if (tok) headers['x-swk-session'] = tok
+      const res = await fetch('/api/bootstrap', { headers })
       const json = await res.json()
       setData(json)
+      if (json.currentUser) {
+        setCurrentUser(json.currentUser)
+        setActiveRole(json.currentUser.role)
+      }
     } catch (e: any) {
       showNotice('err', e?.message || 'Failed to load SWKBayut OS data')
     } finally {
@@ -300,10 +358,163 @@ export default function App() {
     setOfferDestinationNote('')
   }
 
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Sign-in failed')
+      return
+    }
+    setCurrentUser(json.user)
+    setActiveRole(json.user.role)
+    setSessionToken(json.sessionToken)
+    try {
+      localStorage.setItem('swkbayut_session_token', json.sessionToken)
+    } catch {}
+    setAuthModalOpen(false)
+    showNotice('ok', `Signed in as ${json.user.fullName} [${json.user.role}]`)
+    await refreshData(json.sessionToken)
+  }
+
+  const handleQuickRoleSwitch = async (role: UserRole) => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ demoQuickRole: role }),
+    })
+    const json = await res.json()
+    if (res.ok && json.user) {
+      setCurrentUser(json.user)
+      setActiveRole(json.user.role)
+      setSessionToken(json.sessionToken)
+      try {
+        localStorage.setItem('swkbayut_session_token', json.sessionToken)
+      } catch {}
+      showNotice('ok', `Switched Active RBAC Persona to ${json.user.fullName} (${ROLE_CAPABILITIES[role].label})`)
+      await refreshData(json.sessionToken)
+    } else {
+      setActiveRole(role)
+      showNotice('ok', `Active RBAC Role set to ${role}`)
+    }
+  }
+
+  const handleSignupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fullName: signupFullName,
+        email: signupEmail,
+        phone: signupPhone,
+        password: signupPassword,
+        role: signupRole,
+        emiratesIdOrPassport: signupEmiratesId,
+        reraBrn: signupRole === 'AGENT' ? signupReraBrn : undefined,
+        reraOrn: signupRole === 'AGENT' ? signupReraOrn : undefined,
+        agencyOrCompanyName: signupCompany,
+        titleDeedRef: signupRole === 'LANDLORD' ? signupTitleDeed : undefined,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not create account')
+      return
+    }
+    setCurrentUser(json.user)
+    setActiveRole(json.user.role)
+    setSessionToken(json.sessionToken)
+    try {
+      localStorage.setItem('swkbayut_session_token', json.sessionToken)
+    } catch {}
+    setAuthModalOpen(false)
+    showNotice('ok', `Welcome to SWK RENT MVP Cohort, ${json.user.fullName} (${json.user.role})!`)
+    await refreshData(json.sessionToken)
+  }
+
+  const handleLogout = async () => {
+    await apiFetch('/api/auth/logout', { method: 'POST' })
+    setCurrentUser(null)
+    setSessionToken(null)
+    try {
+      localStorage.removeItem('swkbayut_session_token')
+    } catch {}
+    showNotice('ok', 'Signed out of SWK RENT session.')
+    await refreshData(null)
+  }
+
+  const handleCreateWorkflow = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await apiFetch('/api/workflows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        unitId: wfUnitId,
+        tenantName: wfTenantName,
+        annualRentAed: wfAnnualRent,
+        chequeOption: wfCheques,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not start workflow')
+      return
+    }
+    showNotice('ok', `7-Stage Rental Deal Workflow ${json.workflow.workflowCode} launched!`)
+    await refreshData()
+  }
+
+  const handleAdvanceWorkflow = async (wfId: number) => {
+    const res = await apiFetch(`/api/workflows/${wfId}/advance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actorRole: currentUser?.role ?? activeRole,
+        actorName: currentUser?.fullName ?? `${activeRole} Verified Sign-Off`,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC Permission Denied for this workflow stage')
+      return
+    }
+    showNotice(
+      'ok',
+      `Deal ${json.workflow.workflowCode} advanced to Stage ${json.workflow.currentStage}/7 (${
+        UAE_RENTAL_WORKFLOW_STAGES.find(s => s.stage === json.workflow.currentStage)?.shortTitle
+      })!`,
+    )
+    await refreshData()
+  }
+
+  const handleSwitchAppIconVariant = (variant: 'emblem' | 'wordmark') => {
+    setAppIconVariant(variant)
+    try {
+      const w = window as any
+      if (w.SwkAndroidBridge?.setLauncherIconVariant) {
+        w.SwkAndroidBridge.setLauncherIconVariant(variant)
+      }
+      if (w.webkit?.messageHandlers?.SwkIosBridge?.postMessage) {
+        w.webkit.messageHandlers.SwkIosBridge.postMessage({ action: 'setIconVariant', variant })
+      }
+    } catch {}
+    showNotice(
+      'ok',
+      variant === 'emblem'
+        ? 'App Icon set to Primary "Emblem + SWK" (Android Adaptive & iOS AppIcon).'
+        : 'App Icon set to Alternate "SWK Matte Gold Wordmark" (Android Alias & iOS AppIconWordmark).',
+    )
+  }
+
   const submitDigitalOffer = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!offerModalUnit) return
-    const res = await fetch('/api/offers', {
+    const res = await apiFetch('/api/offers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -326,7 +537,7 @@ export default function App() {
     }
     showNotice(
       'ok',
-      `48-Hour Unit Lock Activated for ${offerModalUnit.buildingName} #${offerModalUnit.unitNo}! Landlord notified via Owner360.`,
+      `48-Hour Unit Lock & 7-Stage Workflow (${json.workflowCode}) Activated for ${offerModalUnit.buildingName} #${offerModalUnit.unitNo}!`,
     )
     setOfferModalUnit(null)
     await refreshData()
@@ -335,7 +546,7 @@ export default function App() {
   const submitInstantViewing = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!viewingModalUnit) return
-    const res = await fetch('/api/viewings', {
+    const res = await apiFetch('/api/viewings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -356,19 +567,22 @@ export default function App() {
   }
 
   const handleReserveDeveloperFifo = async (poolId: number) => {
-    const res = await fetch(`/api/developer-pools/${poolId}/reserve`, { method: 'POST' })
-    if (res.ok) {
-      showNotice(
-        'ok',
-        'FIFO Unit Reserved! Next unit in developer queue automatically released at protected RERA floor rent.',
-      )
-      await refreshData()
+    const res = await apiFetch(`/api/developer-pools/${poolId}/reserve`, { method: 'POST' })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Agent, Developer, or Admin can reserve FIFO units.')
+      return
     }
+    showNotice(
+      'ok',
+      'FIFO Unit Reserved! Next unit in developer queue automatically released at protected RERA floor rent.',
+    )
+    await refreshData()
   }
 
   const submitDeveloperPool = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/developer-pools', {
+    const res = await apiFetch('/api/developer-pools', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -382,15 +596,18 @@ export default function App() {
         protectedFloorRent2BrAed: devFloorRent2Br,
       }),
     })
-    if (res.ok) {
-      showNotice('ok', 'Developer Bulk Handover BTR Pool Activated with FIFO Anti-Cannibalization Queue!')
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Developer or Admin can create BTR pools.')
+      return
     }
+    showNotice('ok', 'Developer Bulk Handover BTR Pool Activated with FIFO Anti-Cannibalization Queue!')
+    await refreshData()
   }
 
   const submitTenantBrief = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/reverse-briefs', {
+    const res = await apiFetch('/api/reverse-briefs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -402,15 +619,18 @@ export default function App() {
         chequesReady: briefCheques,
       }),
     })
-    if (res.ok) {
-      showNotice('ok', 'Verified Tenant Brief Broadcasted! Holding agents & landlords can now bid down.')
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not post tenant brief')
+      return
     }
+    showNotice('ok', 'Verified Tenant Brief Broadcasted! Holding agents & landlords can now bid down.')
+    await refreshData()
   }
 
   const handleBidOnTenantBrief = async (brief: VerifiedTenantBrief) => {
     const nextBid = Math.round((brief.bestBidRentAed ?? brief.maxAnnualBudgetAed) * 0.97)
-    const res = await fetch(`/api/reverse-briefs/${brief.id}/bid`, {
+    const res = await apiFetch(`/api/reverse-briefs/${brief.id}/bid`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -418,15 +638,18 @@ export default function App() {
         unitLabel: 'SWK Verified Chiller-Free Mandate',
       }),
     })
-    if (res.ok) {
-      showNotice('ok', `Winning Landlord Bid Placed at ${aed(nextBid)}/yr! Tenant & Agent notified.`)
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Landlord, Agent, or Admin can bid on tenant briefs.')
+      return
     }
+    showNotice('ok', `Winning Landlord Bid Placed at ${aed(nextBid)}/yr! Tenant & Agent notified.`)
+    await refreshData()
   }
 
   const submitCrmImport = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/crm-sync/import', {
+    const res = await apiFetch('/api/crm-sync/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -437,18 +660,20 @@ export default function App() {
       }),
     })
     const json = await res.json()
-    if (res.ok) {
-      showNotice(
-        'ok',
-        `Imported ${crmUnitsCount} verified units at AED 0 cost — saving ${aed(json.savings.annualPortalSavingsAed)}/yr vs traditional portals!`,
-      )
-      await refreshData()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Agent, Developer, or Admin can import XML feeds.')
+      return
     }
+    showNotice(
+      'ok',
+      `Imported ${crmUnitsCount} verified units at AED 0 cost — saving ${aed(json.savings.annualPortalSavingsAed)}/yr vs traditional portals!`,
+    )
+    await refreshData()
   }
 
   const submitGatePass = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/gate-pass/generate', {
+    const res = await apiFetch('/api/gate-pass/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -459,45 +684,54 @@ export default function App() {
         moveDate: '2026-11-18',
       }),
     })
-    if (res.ok) {
-      showNotice('ok', 'Smart Building OA Move-In Security QR Gate Pass Issued!')
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Landlord, Agent, Developer, or Admin can issue Move-In NOCs.')
+      return
     }
+    showNotice('ok', 'Smart Building OA Move-In Security QR Gate Pass Issued!')
+    await refreshData()
   }
 
   const handlePdcAction = async (id: number, action: 'Cleared' | 'Deposited' | 'RNPL_Bounce_Shield') => {
-    const res = await fetch(`/api/pdc/${id}/action`, {
+    const res = await apiFetch(`/api/pdc/${id}/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action }),
     })
-    if (res.ok) {
-      showNotice(
-        'ok',
-        action === 'RNPL_Bounce_Shield'
-          ? 'Cheque converted to 12-Month UAEDDS / RNPL Split — Bounce Prevented!'
-          : `Cheque marked as ${action}`,
-      )
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Landlord, Agent, or Admin can manage PDC cheques.')
+      return
     }
+    showNotice(
+      'ok',
+      action === 'RNPL_Bounce_Shield'
+        ? 'Cheque converted to 12-Month UAEDDS / RNPL Split — Bounce Prevented!'
+        : `Cheque marked as ${action}`,
+    )
+    await refreshData()
   }
 
   const handleOfferDecision = async (id: number, decision: 'Accepted — Ejari Issued' | 'Declined — Unit Unlocked') => {
-    const res = await fetch(`/api/offers/${id}/decision`, {
+    const res = await apiFetch(`/api/offers/${id}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ decision }),
     })
-    if (res.ok) {
-      showNotice('ok', `Offer status updated: ${decision}`)
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Landlord, Agent, or Admin can approve/decline offers.')
+      return
     }
+    showNotice('ok', `Offer status updated: ${decision}`)
+    await refreshData()
   }
 
   const submitMaintenance = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!maintIssue.trim()) return
-    const res = await fetch('/api/maintenance', {
+    const res = await apiFetch('/api/maintenance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -508,16 +742,18 @@ export default function App() {
       }),
     })
     const json = await res.json()
-    if (res.ok) {
-      showNotice('ok', `Ticket logged: ${json.classification.ruleExplanation}`)
-      setMaintIssue('')
-      await refreshData()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not log maintenance ticket')
+      return
     }
+    showNotice('ok', `Ticket logged: ${json.classification.ruleExplanation}`)
+    setMaintIssue('')
+    await refreshData()
   }
 
   const submitA2aRegistration = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/a2a/register', {
+    const res = await apiFetch('/api/a2a/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -529,15 +765,18 @@ export default function App() {
         clientName: a2aClient,
       }),
     })
-    if (res.ok) {
-      showNotice('ok', '7-Day A2A Lead Protection & 50/50 Commission Split Certificate Locked!')
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only RERA Agent or Admin can register A2A mandates.')
+      return
     }
+    showNotice('ok', '7-Day A2A Lead Protection & 50/50 Commission Split Certificate Locked!')
+    await refreshData()
   }
 
   const submitLandlordOnboarding = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/landlord/onboard', {
+    const res = await apiFetch('/api/landlord/onboard', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -551,11 +790,16 @@ export default function App() {
         selectedPlan: llPlan,
       }),
     })
-    if (res.ok) {
-      showNotice('ok', 'Landlord Title Deed & UAE PASS Verified! Mandate synced with Owner360.')
-      await refreshData()
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'RBAC: Only Landlord or Admin can onboard direct Title Deed units.')
+      return
     }
+    showNotice('ok', 'Landlord Title Deed & UAE PASS Verified! Mandate synced with Owner360.')
+    await refreshData()
   }
+
+  const effectiveRole: UserRole = currentUser?.role ?? activeRole
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FBF8F1] text-[#17191C] pb-20 md:pb-6">
@@ -574,20 +818,20 @@ export default function App() {
                   SWK <span className="text-[#D6B46C]">RENT</span>
                 </span>
                 <span className="text-[10px] sm:text-[11px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-[#B89040]/20 text-[#D6B46C] border border-[#B89040]/40 font-semibold">
-                  ORN 51517 · Web + Android
+                  ORN 51517 · Web + Android + iOS
                 </span>
               </div>
               <p className="hidden sm:block text-xs text-gray-400">
-                Zero Credit-Burn · BTR Developer Queue · Reverse Tenant Auction · True Monthly Cost · RERA Shield
+                1,000-User MVP Launch · 5-Role RBAC · 7-Stage Deal Workflow · BTR FIFO Queue · RERA Shield
               </p>
             </div>
           </div>
 
-          {/* Desktop 5-Module Switcher */}
+          {/* Desktop 6-Module Switcher */}
           <nav className="hidden md:flex flex-wrap items-center gap-1.5 bg-[#22262B] p-1.5 rounded-xl border border-white/10">
             <button
               onClick={() => setActiveTab('marketplace')}
-              className={`px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
                 activeTab === 'marketplace'
                   ? 'swk-gold-gradient text-[#17191C] shadow'
                   : 'text-gray-300 hover:text-white hover:bg-white/5'
@@ -598,59 +842,145 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab('buildings')}
-              className={`px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
                 activeTab === 'buildings'
                   ? 'swk-gold-gradient text-[#17191C] shadow'
                   : 'text-gray-300 hover:text-white hover:bg-white/5'
               }`}
             >
               <Building2 size={14} />
-              2. Tower Directory
+              2. Towers
             </button>
             <button
               onClick={() => setActiveTab('superhub')}
-              className={`px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
                 activeTab === 'superhub'
                   ? 'swk-gold-gradient text-[#17191C] shadow'
                   : 'text-[#D6B46C] hover:text-white bg-[#B89040]/10 border border-[#B89040]/30'
               }`}
             >
               <Rocket size={14} />
-              3. Agent, Dev & OA Super-Hub
+              3. Agent & Dev Hub
+            </button>
+            <button
+              onClick={() => setActiveTab('workflow')}
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                activeTab === 'workflow'
+                  ? 'swk-gold-gradient text-[#17191C] shadow'
+                  : 'text-emerald-300 hover:text-white bg-emerald-500/10 border border-emerald-400/30'
+              }`}
+            >
+              <Layers size={14} />
+              4. 7-Stage Workflow & MVP
             </button>
             <button
               onClick={() => setActiveTab('shield')}
-              className={`px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
                 activeTab === 'shield'
                   ? 'swk-gold-gradient text-[#17191C] shadow'
                   : 'text-gray-300 hover:text-white hover:bg-white/5'
               }`}
             >
               <ShieldCheck size={14} />
-              4. RERA & PDC Shield
+              5. RERA Shield
             </button>
             <button
               onClick={() => setActiveTab('partners')}
-              className={`px-3 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
                 activeTab === 'partners'
                   ? 'swk-gold-gradient text-[#17191C] shadow'
                   : 'text-gray-300 hover:text-white hover:bg-white/5'
               }`}
             >
               <Handshake size={14} />
-              5. Landlords & A2A
+              6. Landlords & A2A
             </button>
           </nav>
+        </div>
+
+        {/* RBAC Role Switcher, Auth Status & First 1,000 Users MVP Bar */}
+        <div className="bg-[#111315] border-t border-white/10 px-3 sm:px-6 py-2">
+          <div className="max-w-[1640px] mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#D6B46C] mr-1">
+                Active RBAC Persona:
+              </span>
+              {(
+                [
+                  { role: 'TENANT', label: 'Tenant' },
+                  { role: 'LANDLORD', label: 'Landlord' },
+                  { role: 'AGENT', label: 'RERA Agent' },
+                  { role: 'DEVELOPER', label: 'Developer' },
+                  { role: 'ADMIN', label: 'SWK Admin' },
+                ] as const
+              ).map(p => (
+                <button
+                  key={p.role}
+                  onClick={() => handleQuickRoleSwitch(p.role)}
+                  className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition border ${
+                    effectiveRole === p.role
+                      ? 'bg-[#D6B46C] text-[#17191C] border-[#D6B46C] shadow'
+                      : 'bg-[#17191C] text-gray-300 border-white/10 hover:border-[#D6B46C]/50'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-400/30 text-[11px] font-semibold">
+                <BadgeCheck size={13} />
+                MVP Cohort: {data?.mvpTelemetry?.registeredUsersCount ?? 6} / 1,000 Users ({data?.mvpTelemetry?.remainingEarlyAdopterSlots ?? 994} Slots Open)
+              </span>
+
+              {currentUser ? (
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-[#22262B] border border-[#B89040]/40 text-white font-semibold text-[11px]">
+                    {currentUser.fullName} · <strong className="text-[#D6B46C]">{currentUser.role}</strong>
+                  </span>
+                  <button
+                    onClick={handleLogout}
+                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200 font-semibold text-[11px]"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      setAuthMode('signin')
+                      setAuthModalOpen(true)
+                    }}
+                    className="px-3 py-1 rounded-lg bg-[#22262B] border border-[#D6B46C]/50 text-[#D6B46C] font-bold text-[11px] hover:bg-white/10"
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAuthMode('signup')
+                      setAuthModalOpen(true)
+                    }}
+                    className="px-3 py-1 rounded-lg swk-gold-gradient text-[#17191C] font-extrabold text-[11px] shadow"
+                  >
+                    Sign Up (First 1,000 MVP)
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
       {/* Mobile Bottom Navigation Bar (100% Mobile-Friendly Interface) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#17191C] text-white border-t border-[#B89040]/40 grid grid-cols-5 py-1.5 px-1 shadow-2xl">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#17191C] text-white border-t border-[#B89040]/40 grid grid-cols-6 py-1.5 px-1 shadow-2xl">
         {(
           [
             { id: 'marketplace', label: 'Rentals', icon: Search },
             { id: 'buildings', label: 'Towers', icon: Building2 },
             { id: 'superhub', label: 'Agent/Dev', icon: Rocket },
+            { id: 'workflow', label: 'Workflow', icon: Layers },
             { id: 'shield', label: 'Shield', icon: ShieldCheck },
             { id: 'partners', label: 'A2A/Owner', icon: Handshake },
           ] as const
@@ -665,7 +995,7 @@ export default function App() {
                 active ? 'text-[#D6B46C] bg-white/10' : 'text-gray-400'
               }`}
             >
-              <Icon size={17} />
+              <Icon size={16} />
               <span className="mt-0.5">{tab.label}</span>
             </button>
           )
@@ -2134,7 +2464,708 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* ============================================================
+            MODULE 4: 7-STAGE RENTAL WORKFLOW, RBAC & FIRST 1,000-USER MVP
+           ============================================================ */}
+        {activeTab === 'workflow' && (
+          <div className="space-y-6">
+            {/* Hero Banner: 7-Stage Deal Pipeline & 1,000-User MVP Launch Control */}
+            <div className="swk-obsidian-card text-white rounded-2xl p-5 sm:p-6 border border-[#B89040]/40 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[11px] font-bold uppercase tracking-wider">
+                    <Layers size={13} />
+                    End-to-End UAE Rental Lifecycle · 5-Role RBAC Enforced · First 1,000 Users MVP Ready
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-extrabold">
+                    7-Stage Rental Deal Workflow & Role-Based Access Control (RBAC)
+                  </h2>
+                  <p className="text-xs sm:text-sm text-gray-300 max-w-4xl">
+                    Every rental deal on <strong className="text-[#D6B46C]">SWK RENT</strong> moves through 7 verifiable stages—from UAE PASS KYC & GPS Viewing to Official DLD Ejari, 50-Point Snagging, and Building OA Move-In QR Gate Pass. Each stage is cryptographically gated by role (<strong className="text-white">Tenant, Landlord, RERA Agent, Developer, SWK Admin</strong>).
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setAuthMode('signup')
+                      setAuthModalOpen(true)
+                    }}
+                    className="px-4 py-2.5 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold text-xs shadow-lg"
+                  >
+                    + Register New MVP User (Sign Up)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAuthMode('signin')
+                      setAuthModalOpen(true)
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold text-xs"
+                  >
+                    Sign In / Switch Role
+                  </button>
+                </div>
+              </div>
+
+              {/* 7-Stage Master Reference Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 pt-2">
+                {UAE_RENTAL_WORKFLOW_STAGES.map(st => (
+                  <div
+                    key={st.stage}
+                    className="p-3 rounded-xl bg-[#22262B] border border-white/10 flex flex-col justify-between space-y-2"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between text-[10px] font-bold text-[#D6B46C]">
+                        <span>STAGE {st.stage}</span>
+                        <span className="text-gray-400">SLA {st.slaHours}h</span>
+                      </div>
+                      <div className="font-bold text-xs text-white mt-0.5">{st.shortTitle}</div>
+                      <p className="text-[11px] text-gray-400 mt-1 line-clamp-2">{st.description}</p>
+                    </div>
+                    <div className="pt-1.5 border-t border-white/10 text-[10px] text-emerald-300 font-semibold">
+                      Roles: {st.allowedRolesToAdvance.join(', ')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Active 7-Stage Rental Deal Workflows */}
+            <div className="grid lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 space-y-4">
+                <div className="bg-white rounded-2xl p-5 sm:p-6 border border-[#E5DEC9] shadow-sm space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-bold uppercase tracking-wider text-[#17625F]">
+                        Live Deal Pipeline · Role-Gated Stage Sign-Offs
+                      </span>
+                      <h3 className="text-lg sm:text-xl font-extrabold">
+                        Active 7-Stage UAE Rental Workflows ({(data?.workflows ?? []).length})
+                      </h3>
+                    </div>
+                    <span className="px-3 py-1 rounded-full bg-[#17191C] text-[#D6B46C] text-xs font-bold">
+                      Your Active Role: {effectiveRole} ({ROLE_CAPABILITIES[effectiveRole].label})
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {(data?.workflows ?? []).map(wf => {
+                      const nextStageNum = wf.currentStage < 7 ? wf.currentStage + 1 : null
+                      const nextStageDef = nextStageNum
+                        ? UAE_RENTAL_WORKFLOW_STAGES.find(s => s.stage === nextStageNum)
+                        : null
+                      const perm = nextStageNum
+                        ? canRoleAdvanceWorkflowStage(effectiveRole, nextStageNum)
+                        : { allowed: false }
+
+                      return (
+                        <div
+                          key={wf.id}
+                          className="p-4 sm:p-5 rounded-2xl bg-[#FBF8F1] border border-[#D6B46C]/50 space-y-4 shadow-sm"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="px-2.5 py-0.5 rounded bg-[#17191C] text-[#D6B46C] font-extrabold text-xs">
+                                  {wf.workflowCode}
+                                </span>
+                                <span className="font-extrabold text-sm sm:text-base text-[#17191C]">
+                                  {wf.buildingName} · Unit #{wf.unitNo}
+                                </span>
+                                <span
+                                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                    wf.status === 'COMPLETED_ACTIVE_LEASE'
+                                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                      : 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  }`}
+                                >
+                                  {wf.status === 'COMPLETED_ACTIVE_LEASE'
+                                    ? '✓ Stage 7/7 Completed — Active Lease'
+                                    : `In Progress · Stage ${wf.currentStage} of 7`}
+                                </span>
+                              </div>
+                              <div className="text-xs text-gray-600 mt-1">
+                                Tenant: <strong>{wf.tenantName}</strong> · Landlord: <strong>{wf.landlordName}</strong> · Advisor: <strong>{wf.advisorName}</strong>
+                              </div>
+                            </div>
+
+                            <div className="text-right text-xs">
+                              <div className="font-extrabold text-sm text-[#17625F]">
+                                {aed(wf.annualRentAed)}/yr ({wf.chequeOption}x Mode)
+                              </div>
+                              <div className="text-[11px] text-gray-500">
+                                Split → SWK: {aed(wf.swkCompanyShareAed)} · Advisor: {aed(wf.swkAdvisorShareAed)} · A2A: {aed(wf.a2aPartnerShareAed)}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 7-Step Progress Bar */}
+                          <div className="grid grid-cols-7 gap-1.5">
+                            {UAE_RENTAL_WORKFLOW_STAGES.map(st => {
+                              const done = st.stage <= wf.currentStage
+                              const current = st.stage === wf.currentStage
+                              return (
+                                <div
+                                  key={st.stage}
+                                  className={`p-2 rounded-lg border text-center transition ${
+                                    done
+                                      ? current
+                                        ? 'bg-[#17191C] text-[#D6B46C] border-[#B89040] font-bold shadow'
+                                        : 'bg-[#17625F] text-white border-[#17625F] font-semibold'
+                                      : 'bg-white text-gray-400 border-gray-200'
+                                  }`}
+                                >
+                                  <div className="text-[10px] font-extrabold">S{st.stage}</div>
+                                  <div className="text-[10px] truncate">{st.shortTitle.slice(3)}</div>
+                                </div>
+                              )
+                            })}
+                          </div>
+
+                          {/* Certificates & Deliverable Badges */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="px-2.5 py-1 rounded-lg bg-white border border-gray-200 font-semibold">
+                                Ejari / Tawtheeq: <strong className="text-[#17625F]">{wf.ejariOrTawtheeqNo}</strong>
+                              </span>
+                              <span className="px-2.5 py-1 rounded-lg bg-white border border-gray-200 font-semibold">
+                                Move-In NOC Gate Pass: <strong className="text-[#9E7628]">{wf.gatePassCode}</strong>
+                              </span>
+                              <span className="px-2.5 py-1 rounded-lg bg-white border border-gray-200 font-semibold">
+                                Snagging Shield: <strong>{wf.snaggingScore}/100</strong>
+                              </span>
+                            </div>
+
+                            {nextStageDef ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                {perm.allowed ? (
+                                  <button
+                                    onClick={() => handleAdvanceWorkflow(wf.id)}
+                                    className="px-3.5 py-2 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold text-xs shadow hover:opacity-95"
+                                  >
+                                    Sign Off & Advance to {nextStageDef.shortTitle} →
+                                  </button>
+                                ) : (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-[11px] text-amber-900 bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-300 font-semibold">
+                                      Next ({nextStageDef.shortTitle}) requires {nextStageDef.allowedRolesToAdvance.join('/')}
+                                    </span>
+                                    <button
+                                      onClick={() => handleQuickRoleSwitch(nextStageDef.allowedRolesToAdvance[0]!)}
+                                      className="px-2.5 py-1.5 rounded-lg bg-[#17191C] text-[#D6B46C] font-bold text-[11px]"
+                                    >
+                                      Switch to {nextStageDef.allowedRolesToAdvance[0]}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold text-xs">
+                                ✓ All 7 Stages Complete · Keys Handed Over
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Stage History Audit Log */}
+                          <div className="pt-2 border-t border-[#E5DEC9] space-y-1">
+                            <div className="text-[11px] font-bold text-gray-500 uppercase">
+                              Verified Workflow Audit Trail:
+                            </div>
+                            <div className="grid sm:grid-cols-2 gap-1.5 text-[11px]">
+                              {wf.stageHistory.map((h, idx) => (
+                                <div key={idx} className="p-2 rounded bg-white border border-gray-200">
+                                  <span className="font-bold text-[#17625F]">Stage {h.stage}</span> ·{' '}
+                                  <strong>{h.completedByName}</strong>{' '}
+                                  <span className="px-1.5 py-0.2 rounded bg-gray-100 text-gray-700 font-semibold">
+                                    {h.completedByRole}
+                                  </span>
+                                  <div className="text-gray-600 truncate">{h.note}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Launch New Deal Workflow + App Icons Showcase */}
+              <div className="lg:col-span-4 space-y-6">
+                <div className="bg-white rounded-2xl p-5 border border-[#E5DEC9] shadow-sm space-y-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#9E7628]">
+                    Initiate New Rental Deal
+                  </span>
+                  <h3 className="text-lg font-extrabold">
+                    Launch 7-Stage Deal Workflow
+                  </h3>
+                  <form onSubmit={handleCreateWorkflow} className="space-y-3 text-xs">
+                    <div>
+                      <label className="text-gray-600 block mb-1 font-semibold">Select Verified Unit</label>
+                      <select
+                        value={wfUnitId}
+                        onChange={e => setWfUnitId(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold bg-[#FBF8F1]"
+                      >
+                        {(data?.units ?? []).map(u => (
+                          <option key={u.id} value={u.id}>
+                            {u.unitCode} · {u.buildingName} #{u.unitNo} ({aed(u.annualRent1Cheque)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-600 block mb-1 font-semibold">Verified Tenant Name</label>
+                      <input
+                        value={wfTenantName}
+                        onChange={e => setWfTenantName(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-gray-600 block mb-1 font-semibold">Agreed Rent (AED)</label>
+                        <input
+                          type="number"
+                          value={wfAnnualRent}
+                          onChange={e => setWfAnnualRent(Number(e.target.value))}
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-gray-600 block mb-1 font-semibold">Payment Split</label>
+                        <select
+                          value={wfCheques}
+                          onChange={e => setWfCheques(Number(e.target.value) as ChequeOption)}
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                        >
+                          <option value={1}>1 Cheque</option>
+                          <option value={2}>2 Cheques</option>
+                          <option value={4}>4 Cheques</option>
+                          <option value={12}>12x Monthly</option>
+                        </select>
+                      </div>
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full py-2.5 rounded-xl bg-[#17191C] text-[#D6B46C] font-extrabold text-xs"
+                    >
+                      Create 7-Stage Deal Pipeline
+                    </button>
+                  </form>
+                </div>
+
+                {/* Official Android & iOS Matte Gold App Icon Showcase & Switcher */}
+                <div className="swk-obsidian-card text-white rounded-2xl p-5 border border-[#B89040]/40 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#D6B46C]">
+                        Android (`ae.swkproperties.bayut`) & iOS App Icons
+                      </span>
+                      <h3 className="text-base font-extrabold">
+                        Official Matte Gold App Icon Kit
+                      </h3>
+                    </div>
+                    <Smartphone className="text-[#D6B46C]" size={22} />
+                  </div>
+
+                  <img
+                    src="/brand/app-icons/SWK_Matte_Gold_Wordmark_App_Icon_Preview.png"
+                    alt="SWK Matte Gold Android & iOS App Icons Preview"
+                    className="w-full rounded-xl border border-[#B89040]/40 shadow-md"
+                  />
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchAppIconVariant('emblem')}
+                      className={`p-2.5 rounded-xl border text-left transition flex items-center gap-2 ${
+                        appIconVariant === 'emblem'
+                          ? 'bg-[#B89040]/25 border-[#D6B46C] text-white font-bold'
+                          : 'bg-[#17191C] border-white/10 text-gray-400'
+                      }`}
+                    >
+                      <img
+                        src="/brand/app-icons/Emblem_and_SWK/Android/Google-Play-512.png"
+                        alt="Emblem + SWK"
+                        className="w-10 h-10 rounded-lg border border-white/20"
+                      />
+                      <div>
+                        <div className="text-[11px] font-bold text-white">Emblem + SWK</div>
+                        <div className="text-[10px] text-[#D6B46C]">Primary Icon</div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchAppIconVariant('wordmark')}
+                      className={`p-2.5 rounded-xl border text-left transition flex items-center gap-2 ${
+                        appIconVariant === 'wordmark'
+                          ? 'bg-[#B89040]/25 border-[#D6B46C] text-white font-bold'
+                          : 'bg-[#17191C] border-white/10 text-gray-400'
+                      }`}
+                    >
+                      <img
+                        src="/brand/app-icons/SWK_Wordmark/Android/Google-Play-512.png"
+                        alt="SWK Wordmark"
+                        className="w-10 h-10 rounded-lg border border-white/20"
+                      />
+                      <div>
+                        <div className="text-[11px] font-bold text-white">SWK Wordmark</div>
+                        <div className="text-[10px] text-[#D6B46C]">Alternate Icon</div>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-gray-300 space-y-1 pt-1 border-t border-white/10">
+                    <div>✓ <strong>Android:</strong> Adaptive `mipmap-anydpi-v26/v33` + `Google-Play-512.png` + Gradle Wrapper ready</div>
+                    <div>✓ <strong>iOS:</strong> Xcode `AppIcon.appiconset` + `AppIconWordmark.appiconset` (`1024x1024`) wired</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* First 1,000-User MVP Telemetry, RBAC Matrix & Audit Trail */}
+            <div className="grid lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-6 bg-white rounded-2xl p-5 sm:p-6 border border-[#E5DEC9] shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#17625F]">
+                      5-Persona Role-Based Access Control (RBAC)
+                    </span>
+                    <h3 className="text-lg font-extrabold">
+                      Registered MVP Accounts & Role Capabilities
+                    </h3>
+                  </div>
+                  <Users className="text-[#17625F]" size={22} />
+                </div>
+
+                <div className="space-y-2.5 text-xs">
+                  {(data?.demoUsers ?? []).map(u => (
+                    <div
+                      key={u.id}
+                      className="p-3 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9] flex flex-wrap items-center justify-between gap-2"
+                    >
+                      <div>
+                        <div className="font-bold text-[#17191C]">
+                          {u.fullName}{' '}
+                          <span className="px-2 py-0.5 rounded bg-[#17191C] text-[#D6B46C] text-[10px] font-extrabold">
+                            {u.role}
+                          </span>
+                        </div>
+                        <div className="text-gray-500 text-[11px]">
+                          {u.email} · {u.phone} {u.reraBrn ? `· ${u.reraBrn}` : ''} {u.titleDeedRef ? `· ${u.titleDeedRef}` : ''}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleQuickRoleSwitch(u.role)}
+                        className="px-3 py-1.5 rounded-lg bg-[#17625F] text-white font-bold text-[11px]"
+                      >
+                        Act as {u.role}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="lg:col-span-6 bg-white rounded-2xl p-5 sm:p-6 border border-[#E5DEC9] shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#9E7628]">
+                      First 1,000 Users Production Hardening
+                    </span>
+                    <h3 className="text-lg font-extrabold">
+                      Live Compliance & Security Audit Log
+                    </h3>
+                  </div>
+                  <ShieldCheck className="text-[#9E7628]" size={22} />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="p-3 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9]">
+                    <span className="text-gray-500 block">MVP Cohort Capacity</span>
+                    <strong className="text-base text-[#17191C]">
+                      {data?.mvpTelemetry?.registeredUsersCount ?? 6} / 1,000
+                    </strong>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9]">
+                    <span className="text-gray-500 block">SQLite WAL + Helmet</span>
+                    <strong className="text-base text-emerald-700">Active (600 req/m)</strong>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9]">
+                    <span className="text-gray-500 block">Password & Session</span>
+                    <strong className="text-base text-[#17625F]">scrypt + SHA-256</strong>
+                  </div>
+                </div>
+
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1 text-xs">
+                  {(data?.mvpTelemetry?.recentAuditLogs ?? []).map((log: any) => (
+                    <div
+                      key={log.id}
+                      className="p-2.5 rounded-lg bg-[#FBF8F1] border border-gray-200 flex items-start justify-between gap-2"
+                    >
+                      <div>
+                        <span className="font-bold text-[#17191C]">{log.action}</span>{' '}
+                        <span className="px-1.5 py-0.5 rounded bg-gray-200 text-gray-800 text-[10px] font-bold">
+                          {log.user_role}
+                        </span>
+                        <div className="text-gray-600 text-[11px]">{log.details}</div>
+                      </div>
+                      <span className="text-[10px] text-gray-400 shrink-0">
+                        {String(log.created_at).slice(11, 19)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* ============================================================
+          MODAL: SIGN IN, SIGN UP & 5-ROLE RBAC ONBOARDING
+         ============================================================ */}
+      {authModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 border border-[#B89040] shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2.5">
+                <img
+                  src="/brand/app-icons/Emblem_and_SWK/Android/Google-Play-512.png"
+                  alt="SWK RENT"
+                  className="w-11 h-11 rounded-xl border border-[#B89040]"
+                />
+                <div>
+                  <span className="text-[11px] font-bold uppercase text-[#9E7628]">
+                    SWK RENT · First 1,000 Users MVP Access
+                  </span>
+                  <h3 className="text-lg font-extrabold text-[#17191C]">
+                    {authMode === 'signin' ? 'Sign In to SWK RENT OS' : 'Create Verified MVP Account'}
+                  </h3>
+                </div>
+              </div>
+              <button onClick={() => setAuthModalOpen(false)} className="p-1 text-gray-400 hover:text-black">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-gray-100 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setAuthMode('signin')}
+                className={`py-2 rounded-lg transition ${
+                  authMode === 'signin' ? 'bg-[#17191C] text-[#D6B46C] shadow' : 'text-gray-600'
+                }`}
+              >
+                Sign In (Existing / Demo)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMode('signup')}
+                className={`py-2 rounded-lg transition ${
+                  authMode === 'signup' ? 'bg-[#17191C] text-[#D6B46C] shadow' : 'text-gray-600'
+                }`}
+              >
+                Sign Up (New MVP User)
+              </button>
+            </div>
+
+            {authMode === 'signin' ? (
+              <div className="space-y-4 text-xs">
+                <form onSubmit={handleLoginSubmit} className="space-y-3">
+                  <div>
+                    <label className="text-gray-600 block mb-1 font-semibold">Email Address</label>
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      onChange={e => setLoginEmail(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-600 block mb-1 font-semibold">Password</label>
+                    <input
+                      type="password"
+                      value={loginPassword}
+                      onChange={e => setLoginPassword(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full py-3 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold text-sm shadow"
+                  >
+                    Sign In with Encrypted Session
+                  </button>
+                </form>
+
+                <div className="pt-3 border-t border-gray-200 space-y-2">
+                  <div className="font-bold text-gray-600">
+                    1-Tap Instant Demo Persona Sign-In (Password: <code>SwkRent2026!</code>):
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        { role: 'TENANT', email: 'tenant@uaepass.ae', label: 'Tenant (Alexander Vance)' },
+                        { role: 'LANDLORD', email: 'landlord@swkpropertiesuae.com', label: 'Landlord (Dr. Khalid)' },
+                        { role: 'AGENT', email: 'advisor@swkpropertiesuae.com', label: 'SWK Advisor (M. Haseeb)' },
+                        { role: 'DEVELOPER', email: 'developer@selectgroup.ae', label: 'Developer (Select Group)' },
+                        { role: 'ADMIN', email: 'admin@swkpropertiesuae.com', label: 'SWK Admin (ORN 51517)' },
+                      ] as const
+                    ).map(item => (
+                      <button
+                        key={item.role}
+                        type="button"
+                        onClick={() => {
+                          setLoginEmail(item.email)
+                          setLoginPassword('SwkRent2026!')
+                          void handleQuickRoleSwitch(item.role)
+                          setAuthModalOpen(false)
+                        }}
+                        className="p-2 rounded-lg bg-[#FBF8F1] hover:bg-[#F4EFE3] border border-[#D6B46C]/50 text-left font-semibold"
+                      >
+                        <div className="text-[#17191C] font-bold">{item.label}</div>
+                        <div className="text-[10px] text-gray-500">{item.email}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSignupSubmit} className="space-y-3 text-xs">
+                <div>
+                  <label className="text-gray-600 block mb-1 font-semibold">Select Your UAE Rental Role</label>
+                  <select
+                    value={signupRole}
+                    onChange={e => setSignupRole(e.target.value as UserRole)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold bg-[#FBF8F1]"
+                  >
+                    <option value="TENANT">TENANT — Verified Tenant / Expat Renter</option>
+                    <option value="LANDLORD">LANDLORD — Property Owner (Owner360)</option>
+                    <option value="AGENT">AGENT — RERA Broker / A2A Partner</option>
+                    <option value="DEVELOPER">DEVELOPER — Institutional / BTR Handover Desk</option>
+                  </select>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="text-gray-600 block mb-1 font-semibold">Full Name</label>
+                    <input
+                      value={signupFullName}
+                      onChange={e => setSignupFullName(e.target.value)}
+                      placeholder="e.g. Tariq Al Maktoum"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-600 block mb-1 font-semibold">UAE Mobile / WhatsApp</label>
+                    <input
+                      value={signupPhone}
+                      onChange={e => setSignupPhone(e.target.value)}
+                      placeholder="+971 50 123 4567"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-600 block mb-1 font-semibold">Email Address</label>
+                    <input
+                      type="email"
+                      value={signupEmail}
+                      onChange={e => setSignupEmail(e.target.value)}
+                      placeholder="you@company.ae"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-600 block mb-1 font-semibold">Password (min 8 chars + number)</label>
+                    <input
+                      type="password"
+                      value={signupPassword}
+                      onChange={e => setSignupPassword(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-gray-600 block mb-1 font-semibold">
+                    Emirates ID or New Expat Passport No. (UAE PASS)
+                  </label>
+                  <input
+                    value={signupEmiratesId}
+                    onChange={e => setSignupEmiratesId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                  />
+                </div>
+
+                {signupRole === 'AGENT' && (
+                  <div className="grid grid-cols-2 gap-2.5 p-3 rounded-xl bg-[#FBF8F1] border border-[#D6B46C]">
+                    <div>
+                      <label className="text-gray-600 block mb-1 font-semibold">RERA Broker BRN *</label>
+                      <input
+                        value={signupReraBrn}
+                        onChange={e => setSignupReraBrn(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-600 block mb-1 font-semibold">Agency RERA ORN *</label>
+                      <input
+                        value={signupReraOrn}
+                        onChange={e => setSignupReraOrn(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold"
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {signupRole === 'LANDLORD' && (
+                  <div className="p-3 rounded-xl bg-[#FBF8F1] border border-[#D6B46C]">
+                    <label className="text-gray-600 block mb-1 font-semibold">
+                      DLD Title Deed / Abu Dhabi Mulkiya Reference *
+                    </label>
+                    <input
+                      value={signupTitleDeed}
+                      onChange={e => setSignupTitleDeed(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold"
+                      required
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-gray-600 block mb-1 font-semibold">
+                    Employer / Agency / Developer Organization
+                  </label>
+                  <input
+                    value={signupCompany}
+                    onChange={e => setSignupCompany(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold text-sm shadow"
+                >
+                  Complete Verification & Join First 1,000 MVP Users
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ============================================================
           MODAL: FULL UNIT DETAIL, 50-POINT SNAGGING & AUTOPILOT DRAWER

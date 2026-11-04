@@ -4,32 +4,46 @@
   <img src="public/brand/swk-rent/black/Full_logo/SWK_Rent_Full_logo_512px.png" alt="SWK Rent — SWK Properties LLC" width="220" />
 </p>
 
-**UAE's First Operating-System-Backed Dedicated Rental Platform** — built for **SWK Properties L.L.C.** (RERA ORN `51517`) and synchronized with **[SWK Properties OS](https://github.com/swkpropertiesuae/swkpropertiesOS)**.
+<p align="center">
+  <img src="public/brand/app-icons/SWK_Matte_Gold_Wordmark_App_Icon_Preview.png" alt="SWK Matte Gold Android & iOS App Icons" width="540" />
+</p>
+
+**UAE's First Operating-System-Backed Dedicated Rental Platform** — built for **SWK Properties L.L.C.** (RERA ORN `51517`) and synchronized with **[SWK Properties OS](https://github.com/swkpropertiesuae/swkpropertiesOS)**. Ready for first **1,000-User MVP Launch** across Web, Native Android (`ae.swkproperties.bayut`), and iOS (`ae.swkproperties.bayut`).
 
 ---
 
-## 🎯 Why SWKBayut Exists: Closing the 18 UAE Rental Market Loopholes
+## 🔐 5-Persona Role-Based Access Control (RBAC), Sign-Up & Sign-In
 
-Traditional UAE property portals (Bayut, Property Finder, Dubizzle) are **disconnected advertising boards**. They sell listing credits to brokers and have zero control over physical keys, GPS viewing attendance, cheque vaults, Ejari execution, or deposit returns.
+Every account is protected with cryptographic `scrypt` password hashing, `SHA-256` session tokens, brute-force lockout protection, `@fastify/helmet`, and `@fastify/rate-limit`.
 
-**SWKBayut** connects the public consumer rental search directly to an active **Real Estate Operating System**:
+| Role | Demo Email | Demo Password | Key Capabilities |
+| :--- | :--- | :--- | :--- |
+| **`ADMIN`** | `admin@swkpropertiesuae.com` | `SwkRent2026!` | Full 1,000-User MVP cohort telemetry, compliance audit trail, workflow override, and escrow guard. |
+| **`AGENT`** (SWK) | `advisor@swkpropertiesuae.com` | `SwkRent2026!` | `AED 0` CRM XML feed import, GPS key vault dispatch, 1-Tap WhatsApp client pitch, Stage 5 Ejari & Stage 7 NOC sign-off. |
+| **`AGENT`** (A2A) | `partner@apexcrest.ae` | `SwkRent2026!` | Protected 7-day A2A client registration & automated `50% Partner / 25% SWK / 25% Advisor` split lock. |
+| **`LANDLORD`** | `landlord@swkpropertiesuae.com` | `SwkRent2026!` | Direct Title Deed onboarding (`AED 0` landlord fee), Stage 3 1-Click Offer Approval, Reverse Brief bidding, PDC vault. |
+| **`DEVELOPER`** | `developer@selectgroup.ae` | `SwkRent2026!` | Bulk Tower Handover BTR Pools, FIFO Anti-Cannibalization public queue caps (`max 3 units/layout`), RERA yield floor protection. |
+| **`TENANT`** | `tenant@uaepass.ae` | `SwkRent2026!` | True Monthly Cost Calculator, Instant GPS/Smart-Lock viewings, 48h Offer Lock, Reverse Rental Briefs, RERA Renewal Shield. |
 
-1. **Zero Duplicate Ads (Canonical Building & Title-Deed Deduplication):** Every unit is indexed by **Building + Unit No. + Makani + Title Deed + Trakheesi Madmoun QR**. When a 48-hour offer lock or Ejari is active, the unit auto-locks in 1 second—eliminating bait-and-switch ghost listings.
-2. **True Monthly All-In Cost Engine:** Every card dynamically calculates:
-   - Headline Rent across `1 Cheque`, `2 Cheques`, `4 Cheques`, `12 Monthly (UAEDDS/RNPL)`, or `30-Day New Expat Bridge Pass` (for newly arrived expats awaiting Emirates ID).
-   - Building-specific **Chiller** (`Chiller Free`, `Empower`, `Tabreed`), **DEWA**, and **5% Municipality Fee** estimates.
-   - Exact Move-In Cash Required (`Security Deposit + Commission/Flat Fee + Ejari AED 220 + DEWA/Chiller Deposits`).
-3. **Hybrid Supply & Commission Model:**
-   - **SWK Exclusive / Managed (`5%`):** Physical key held in SWK Vault (`SWK-KEY-*`), `50% SWK Company / 50% Sales Advisor` split.
-   - **Verified A2A Partner Network (`5%`):** External RERA brokers register their ORN/BRN + client for a 7-day protection lock and automated `50% Partner / 25% SWK Company / 25% SWK Advisor` split.
-   - **Direct-to-Landlord Self-Serve (`Flat AED 2,999`):** UAE PASS + Title-Deed verified landlords list for `AED 0` and tenants save up to `70%` on agency fees.
-4. **Instant GPS & Smart-Lock Viewings:** Live key custody tracking (`In SWK Vault` / `Smart Lock Instant`) + `SWK ONE Android` GPS dispatch.
-5. **1-Click Binding Digital Offer & Hard UAE Payment Guard:** Replaces chaotic WhatsApp haggling with a formal digital offer, `AED 2,000` escrow holding deposit, and a **Hard Server Compliance Gate** that blocks any transfer to a Sales Advisor's personal bank account (`400 Bad Request`).
-6. **Post-Lease Tenancy Shield:**
-   - **90-Day RERA Decree 43 & Law 33 of 2008 Renewal Shield:** Automatically flags illegal rent hikes or late notices (`< 90 days`).
-   - **PDC Cheque Vault & RNPL Bounce Shield:** Lets tenants convert an upcoming cheque to a monthly UAEDDS/RNPL split before it bounces.
-   - **UAE `AED 500` Maintenance Classifier:** Automatically routes `< AED 500` minor wear to Tenant and `>= AED 500` major/structural repairs to Landlord in `Owner360`.
-   - **50-Point Timestamped Snagging & 24-Month Eviction Watchdog:** Protects security deposits and monitors against illegal re-listing after "personal use" evictions.
+---
+
+## 🔄 7-Stage End-to-End UAE Rental Deal Workflow
+
+1. **Stage 1 · `KYC_AND_VIEWING`** (`TENANT`, `AGENT`, `ADMIN`): UAE PASS / Passport KYC & verified GPS or Smart-Lock viewing.
+2. **Stage 2 · `OFFER_AND_DEPOSIT_LOCK`** (`TENANT`, `AGENT`, `ADMIN`): Binding digital offer + `AED 2,000` Corporate Escrow 48h unit lock (hard-blocks personal advisor bank accounts).
+3. **Stage 3 · `LANDLORD_APPROVAL`** (`LANDLORD`, `AGENT`, `ADMIN`): Landlord 1-click acceptance in Owner360.
+4. **Stage 4 · `CONTRACT_AND_PAYMENTS`** (`TENANT`, `LANDLORD`, `AGENT`, `ADMIN`): DLD Unified Tenancy Contract signed + PDC Cheques vaulted or UAEDDS monthly direct debit active.
+5. **Stage 5 · `EJARI_TAWTHEEQ_ISSUED`** (`AGENT`, `LANDLORD`, `ADMIN`): Auto-issues official DLD Ejari / Abu Dhabi Tawtheeq certificate (`EJARI-2026-*`) and locks the commission split ledger.
+6. **Stage 6 · `DEWA_CHILLER_AND_SNAGGING`** (`TENANT`, `AGENT`, `ADMIN`): DEWA + Empower/Tabreed activation & 50-point move-in snagging photo vault locked.
+7. **Stage 7 · `MOVE_IN_NOC_AND_KEYS`** (`AGENT`, `LANDLORD`, `ADMIN`): Auto-generates Building OA Security QR Move-In Gate Pass (`NOC-PASS-*`) and completes key handover (`COMPLETED_ACTIVE_LEASE`).
+
+---
+
+## 📱 Native Android (`android/`) & iOS (`ios/`) Apps
+
+Both official **SWK Matte Gold** app icon variants (**Emblem + SWK** and **SWK Wordmark**) are bundled in:
+- **Android (`android/app/src/main/res/mipmap-*` & `ic_launcher-playstore.png`):** Adaptive launcher icons (`v26` & `v33` with monochrome layer), dynamic `<activity-alias>` icon switcher (`SwkAndroidBridge.setLauncherIconVariant`), Gradle 8.9 wrapper (`gradlew` / `gradlew.bat`), and automated GitHub Actions APK/AAB workflow (`.github/workflows/android-apk.yml`).
+- **iOS (`ios/SWKBayut/Assets.xcassets/`):** `AppIcon.appiconset` (Primary Emblem + SWK `1024x1024`) and `AppIconWordmark.appiconset` (Alternate SWK Wordmark `1024x1024`) with `WKWebView` + FaceID/TouchID bridge (`SwkIosBridge`).
 
 ---
 
@@ -38,6 +52,7 @@ Traditional UAE property portals (Bayut, Property Finder, Dubizzle) are **discon
 ```bash
 npm run dev          # Starts API (:8090) + Web (:5175)
 npm run typecheck    # TypeScript validation (0 errors)
+npm test             # Run 20/20 UAE Rental OS, RBAC & 7-Stage Workflow checks
 npm run build        # Production Web + Server bundle
-npm test             # Run 9/9 UAE Rental OS acceptance checks
+npm run mobile:sync  # Sync production Web bundle into Android & iOS native assets
 ```

@@ -18,6 +18,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx tests/rental-suite.ts",
     "android:sync": "npm run build:web && node tools/android/sync-assets.mjs",
+    "ios:sync": "npm run build:web && node tools/ios/sync-assets.mjs",
+    "mobile:sync": "npm run build:web && node tools/android/sync-assets.mjs && node tools/ios/sync-assets.mjs",
     "android:apk": "cd android && ./gradlew assembleDebug",
     "android:aab": "cd android && ./gradlew bundleRelease"
   },

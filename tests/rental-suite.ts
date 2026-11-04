@@ -216,8 +216,128 @@ async function runTests() {
     assert.match(passRes.json().pass.qr_token, /^QR-OA-VERIFIED/)
   })
 
+  // 14. User Signup, Signin, Session Token & 1,000-User MVP Cohort Onboarding
+  const uniqueEmail = `mvp.broker.${Date.now()}@swkpropertiesuae.com`
+  const signupRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/signup',
+    payload: {
+      fullName: 'Zayd Al Maktoum',
+      email: uniqueEmail,
+      phone: '+971 50 911 2233',
+      password: 'SwkMvpUser2026!',
+      role: 'AGENT',
+      reraBrn: 'BRN-77812',
+      reraOrn: 'ORN-51517',
+      agencyOrCompanyName: 'SWK Properties L.L.C.',
+    },
+  })
+  check('POST /api/auth/signup registers new RERA Agent in 1,000-user MVP cohort & issues session token', () => {
+    assert.equal(signupRes.statusCode, 200)
+    const body = signupRes.json()
+    assert.equal(body.ok, true)
+    assert.equal(body.user.role, 'AGENT')
+    assert.ok(body.sessionToken.startsWith('swk_sess_'))
+  })
+
+  const loginRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: {
+      email: uniqueEmail,
+      password: 'SwkMvpUser2026!',
+    },
+  })
+  const agentToken = loginRes.json().sessionToken as string
+  const meRes = await app.inject({
+    method: 'GET',
+    url: '/api/auth/me',
+    headers: { 'x-swk-session': agentToken },
+  })
+  check('POST /api/auth/login & GET /api/auth/me authenticate scrypt password & resolve active session', () => {
+    assert.equal(loginRes.statusCode, 200)
+    assert.equal(meRes.statusCode, 200)
+    assert.equal(meRes.json().authenticated, true)
+    assert.equal(meRes.json().user.email, uniqueEmail)
+  })
+
+  // 15. Role-Based Access Control (RBAC) Enforcement
+  const tenantCreatePoolRes = await app.inject({
+    method: 'POST',
+    url: '/api/developer-pools',
+    headers: { 'x-swk-role': 'TENANT' },
+    payload: {
+      projectName: 'Unauthorized Tenant Pool',
+      developerName: 'Test',
+      community: 'Dubai',
+      handoverDate: '2026-12-30',
+      totalHandoverUnits: 50,
+      protectedFloorRent1BrAed: 90000,
+      protectedFloorRent2BrAed: 130000,
+    },
+  })
+  check('RBAC blocks TENANT from creating a Developer BTR Pool with HTTP 403 Forbidden', () => {
+    assert.equal(tenantCreatePoolRes.statusCode, 403)
+    assert.match(tenantCreatePoolRes.json().error, /RBAC Access Denied/i)
+  })
+
+  // 16. 7-Stage End-to-End UAE Rental Deal Workflow & Role-Gated Sign-Offs
+  const createWfRes = await app.inject({
+    method: 'POST',
+    url: '/api/workflows',
+    headers: { 'x-swk-session': agentToken },
+    payload: {
+      unitId: 3,
+      tenantName: 'Noura Al Suwaidi',
+      annualRentAed: 78000,
+      chequeOption: 2,
+    },
+  })
+  const wfId = createWfRes.json().workflow.id as number
+  check('POST /api/workflows initializes Stage 1 of 7-Stage UAE Rental Deal Pipeline', () => {
+    assert.equal(createWfRes.statusCode, 200)
+    assert.equal(createWfRes.json().workflow.currentStage, 1)
+  })
+
+  // Advance Stage 1 -> Stage 2 (Offer & Lock) as TENANT
+  const wfStage2Res = await app.inject({
+    method: 'POST',
+    url: `/api/workflows/${wfId}/advance`,
+    headers: { 'x-swk-role': 'TENANT' },
+    payload: { note: 'Offer & AED 2,000 Escrow Lock submitted by Tenant' },
+  })
+  assert.equal(wfStage2Res.statusCode, 200)
+
+  // Attempt Stage 2 -> Stage 3 (Landlord Approval) as TENANT -> MUST FAIL WITH 403!
+  const wfTenantApproveFail = await app.inject({
+    method: 'POST',
+    url: `/api/workflows/${wfId}/advance`,
+    headers: { 'x-swk-role': 'TENANT' },
+  })
+  check('7-Stage Workflow RBAC blocks TENANT from signing off Stage 3 (Landlord Approval) with HTTP 403', () => {
+    assert.equal(wfTenantApproveFail.statusCode, 403)
+    assert.equal(wfTenantApproveFail.json().targetStage, 3)
+  })
+
+  // Advance Stage 3 (LANDLORD), Stage 4 (TENANT), Stage 5 (AGENT -> issues Ejari), Stage 6 (TENANT), Stage 7 (AGENT -> issues Gate Pass & Active Lease)
+  await app.inject({ method: 'POST', url: `/api/workflows/${wfId}/advance`, headers: { 'x-swk-role': 'LANDLORD' } })
+  await app.inject({ method: 'POST', url: `/api/workflows/${wfId}/advance`, headers: { 'x-swk-role': 'TENANT' } })
+  const stage5Res = await app.inject({ method: 'POST', url: `/api/workflows/${wfId}/advance`, headers: { 'x-swk-role': 'AGENT' } })
+  await app.inject({ method: 'POST', url: `/api/workflows/${wfId}/advance`, headers: { 'x-swk-role': 'TENANT' } })
+  const stage7Res = await app.inject({ method: 'POST', url: `/api/workflows/${wfId}/advance`, headers: { 'x-swk-role': 'AGENT' } })
+
+  check('7-Stage Workflow completes Stages 3..7, auto-issues Official Ejari at Stage 5 & Move-In QR Gate Pass at Stage 7', () => {
+    assert.equal(stage5Res.statusCode, 200)
+    assert.match(stage5Res.json().workflow.ejariOrTawtheeqNo, /^EJARI-2026-/)
+    assert.equal(stage7Res.statusCode, 200)
+    const finalWf = stage7Res.json().workflow
+    assert.equal(finalWf.currentStage, 7)
+    assert.equal(finalWf.status, 'COMPLETED_ACTIVE_LEASE')
+    assert.match(finalWf.gatePassCode, /^NOC-PASS-/)
+  })
+
   await app.close()
-  console.log(`\nALL ${passed}/${passed} SWKBAYUT UAE RENTAL OS & SUPER-HUB CHECKS PASSED!`)
+  console.log(`\nALL ${passed}/${passed} SWKBAYUT UAE RENTAL OS, RBAC, 7-STAGE WORKFLOW & SUPER-HUB CHECKS PASSED!`)
 }
 
 runTests().catch(err => {
