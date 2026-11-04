@@ -562,15 +562,17 @@ export default function App() {
       {/* Top Luxury SWK Navigation Header */}
       <header className="sticky top-0 z-40 bg-[#17191C] text-white border-b border-[#B89040]/30 shadow-lg">
         <div className="max-w-[1640px] mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="flex items-center gap-3">
             <img
-              src="/brand/logo-png/swk-logo-gold-512.png"
-              alt="SWK Properties LLC"
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg object-contain bg-[#22252A] p-1 border border-[#B89040]/40"
+              src="/brand/swk-rent/transparent_for_black/Full_logo/SWK_Rent_Full_logo_512px.png"
+              alt="SWK Rent — UAE Verified Rentals"
+              className="h-12 sm:h-14 w-auto rounded-xl object-contain bg-[#111315] px-2.5 py-1 border border-[#B89040]/40 shadow-md"
             />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold tracking-tight text-base sm:text-lg text-white">SWKBayut</span>
+                <span className="font-extrabold tracking-tight text-base sm:text-lg text-white">
+                  SWK <span className="text-[#D6B46C]">RENT</span>
+                </span>
                 <span className="text-[10px] sm:text-[11px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-[#B89040]/20 text-[#D6B46C] border border-[#B89040]/40 font-semibold">
                   ORN 51517 · Web + Android
                 </span>

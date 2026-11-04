@@ -1,7 +1,7 @@
-# SWKBayut — UAE Verified Rental Marketplace & Tenancy OS
+# SWK Rent (SWKBayut) — UAE Verified Rental Marketplace & Tenancy OS
 
 <p align="center">
-  <img src="public/brand/logo-png/swk-logo-gold-512.png" alt="SWK Properties LLC" width="160" />
+  <img src="public/brand/swk-rent/black/Full_logo/SWK_Rent_Full_logo_512px.png" alt="SWK Rent — SWK Properties LLC" width="220" />
 </p>
 
 **UAE's First Operating-System-Backed Dedicated Rental Platform** — built for **SWK Properties L.L.C.** (RERA ORN `51517`) and synchronized with **[SWK Properties OS](https://github.com/swkpropertiesuae/swkpropertiesOS)**.
