@@ -18,6 +18,9 @@ import {
   mapUserRow,
   recordAuditLog,
   getMvpLaunchTelemetry,
+  getUserCustomUsage,
+  upsertUserCustomUsage,
+  incrementUserUsageMetric,
 } from './db'
 import {
   hashPassword,
@@ -145,6 +148,20 @@ export function buildServer() {
       reraOrn?: string
       agencyOrCompanyName?: string
       titleDeedRef?: string
+      personaBadge?: string
+      commissionSplitRatio?: string
+      customPlanName?: string
+      customPlanTier?: string
+      defaultChequeMode?: ChequeOption
+      preferredEmirate?: 'All' | 'Dubai' | 'Abu Dhabi'
+      chillerFreePreferred?: boolean
+      maxCommuteDifcMins?: number
+      customCommissionPct?: number
+      customFlatFeeAed?: number
+      fifoQueueCapUnits?: number
+      btrFifoQueueCap?: number
+      customWebhookUrl?: string
+      whatsappPitchSignature?: string
     }
 
     if (!body.email || !body.password || !body.fullName || !body.phone) {
@@ -210,7 +227,36 @@ export function buildServer() {
         now,
       )
 
-    const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid)
+    const newUserId = Number(info.lastInsertRowid)
+    if (
+      body.customPlanName ||
+      body.customPlanTier ||
+      body.defaultChequeMode ||
+      body.preferredEmirate ||
+      body.customWebhookUrl ||
+      body.whatsappPitchSignature ||
+      body.customCommissionPct !== undefined ||
+      body.customFlatFeeAed !== undefined
+    ) {
+      upsertUserCustomUsage(newUserId, {
+        personaBadge: body.personaBadge,
+        commissionSplitRatio: body.commissionSplitRatio,
+        customPlanName: body.customPlanName,
+        customPlanTier: body.customPlanTier,
+        defaultChequeMode: body.defaultChequeMode,
+        preferredEmirate: body.preferredEmirate,
+        chillerFreePreferred: body.chillerFreePreferred,
+        maxCommuteDifcMins: body.maxCommuteDifcMins,
+        customCommissionPct: body.customCommissionPct,
+        customFlatFeeAed: body.customFlatFeeAed,
+        fifoQueueCapUnits: body.fifoQueueCapUnits,
+        btrFifoQueueCap: body.btrFifoQueueCap,
+        customWebhookUrl: body.customWebhookUrl,
+        whatsappPitchSignature: body.whatsappPitchSignature,
+      })
+    }
+
+    const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(newUserId)
     const user = mapUserRow(userRow)
 
     const { token, tokenHash } = generateSessionToken()
@@ -256,14 +302,25 @@ export function buildServer() {
       email?: string
       password?: string
       demoQuickRole?: UserRole
+      demoEmail?: string
+      uaePassQuickAuth?: boolean
     }
 
     let userRow: any = null
-    if (body.demoQuickRole && !body.password) {
+    if (body.demoEmail && !body.password) {
+      // 1-Tap Dedicated Demo Account Sign-In by exact persona email
+      userRow = db
+        .prepare('SELECT * FROM users WHERE lower(email) = ? LIMIT 1')
+        .get(body.demoEmail.trim().toLowerCase())
+    } else if (body.demoQuickRole && !body.password) {
       // 1-Tap Demo Role Switcher for rapid testing of all 5 personas
       userRow = db
         .prepare('SELECT * FROM users WHERE role = ? ORDER BY id ASC LIMIT 1')
         .get(body.demoQuickRole)
+    } else if (body.uaePassQuickAuth && body.email) {
+      userRow = db
+        .prepare('SELECT * FROM users WHERE lower(email) = ? LIMIT 1')
+        .get(body.email.trim().toLowerCase())
     } else {
       const emailClean = (body.email || '').trim().toLowerCase()
       if (!emailClean || !body.password) {
@@ -347,7 +404,84 @@ export function buildServer() {
     return {
       authenticated: Boolean(user),
       user,
+      customUsage: user?.customUsage ?? null,
       capabilities: user ? ROLE_CAPABILITIES[user.role] : null,
+    }
+  })
+
+  app.get('/api/auth/custom-usage', async (req) => {
+    const user = resolveRequestUser(req)
+    const targetUserId = user?.id ?? 1
+    return {
+      ok: true,
+      customUsage: getUserCustomUsage(targetUserId),
+    }
+  })
+
+  app.post('/api/auth/custom-usage', async (req) => {
+    const user = resolveRequestUser(req)
+    const body = (req.body ?? {}) as {
+      userId?: number
+      personaBadge?: string
+      commissionSplitRatio?: string
+      customPlanName?: string
+      customPlanTier?: string
+      defaultChequeMode?: ChequeOption
+      preferredEmirate?: 'All' | 'Dubai' | 'Abu Dhabi'
+      chillerFreePreferred?: boolean
+      maxCommuteDifcMins?: number
+      customCommissionPct?: number
+      customFlatFeeAed?: number
+      fifoQueueCapUnits?: number
+      btrFifoQueueCap?: number
+      customWebhookUrl?: string
+      whatsappPitchSignature?: string
+    }
+    const targetUserId = user?.id ?? Number(body.userId) ?? 1
+    const updatedUsage = upsertUserCustomUsage(targetUserId, body)
+    const updatedUserRow = db.prepare('SELECT * FROM users WHERE id = ?').get(targetUserId)
+    const updatedUser = updatedUserRow ? mapUserRow(updatedUserRow) : user
+
+    recordAuditLog({
+      user: updatedUser,
+      action: 'CUSTOM_USAGE_UPDATED',
+      entityType: 'CUSTOM_USAGE',
+      entityRef: updatedUsage.userEmail,
+      details: `Updated custom usage profile (${updatedUsage.customPlanName} · Cheque Mode: ${updatedUsage.defaultChequeMode})`,
+    })
+
+    return {
+      ok: true,
+      user: updatedUser,
+      customUsage: updatedUsage,
+    }
+  })
+
+  app.post('/api/auth/custom-usage/track', async (req) => {
+    const user = resolveRequestUser(req)
+    const body = (req.body ?? {}) as {
+      userId?: number
+      metric?:
+        | 'listings'
+        | 'listingsSyncedCount'
+        | 'viewings'
+        | 'viewingsBookedOrDispatched'
+        | 'offers'
+        | 'digitalOffersSubmittedOrReviewed'
+        | 'workflows'
+        | 'workflowsSignedOffCount'
+        | 'pitches'
+        | 'whatsappPitchesGenerated'
+        | 'webhooks'
+        | 'apiWebhookEventsCount'
+      delta?: number
+    }
+    const targetUserId = user?.id ?? Number(body.userId) ?? 1
+    const metric = body.metric || 'pitches'
+    incrementUserUsageMetric(targetUserId, metric, Number(body.delta) || 1)
+    return {
+      ok: true,
+      customUsage: getUserCustomUsage(targetUserId),
     }
   })
 
@@ -646,6 +780,7 @@ export function buildServer() {
       entityRef: wfRow.workflow_code,
       details: `${wfRow.workflow_code} advanced to Stage ${nextStage} (${stageMeta.shortTitle}) by ${effectiveName} [${effectiveRole}]`,
     })
+    incrementUserUsageMetric(user?.id, 'workflows', 1)
 
     pushEventToOsApi({
       eventType: `WORKFLOW_STAGE_${nextStage}`,
@@ -735,6 +870,7 @@ export function buildServer() {
       entityRef: unit.unitCode,
       details: `Viewing booked for ${unit.unitCode} by ${body.tenantName.trim()}`,
     })
+    incrementUserUsageMetric(user?.id, 'viewings', 1)
 
     pushEventToOsApi({
       eventType: 'VIEWING_DISPATCHED',
@@ -896,6 +1032,7 @@ export function buildServer() {
       entityRef: unit.unitCode,
       details: `Offer AED ${Number(body.offeredAnnualRent).toLocaleString('en-US')} submitted by ${body.tenantName.trim()}`,
     })
+    incrementUserUsageMetric(user?.id, 'offers', 1)
 
     pushEventToOsApi({
       eventType: 'OFFER_SUBMITTED',
@@ -1258,7 +1395,7 @@ export function buildServer() {
   })
 
   app.post('/api/crm-sync/import', async (req, reply) => {
-    const { allowed } = checkRbacPermission(req, reply, 'IMPORT_CRM_XML')
+    const { allowed, user } = checkRbacPermission(req, reply, 'IMPORT_CRM_XML')
     if (!allowed) return
 
     const body = (req.body ?? {}) as {
@@ -1290,6 +1427,7 @@ export function buildServer() {
         savings.annualPortalSavingsAed,
         new Date().toISOString(),
       )
+    incrementUserUsageMetric(user?.id, 'listings', unitsCount)
     const feed = db.prepare('SELECT * FROM crm_xml_feeds WHERE id = ?').get(info.lastInsertRowid)
     return { ok: true, feed, savings }
   })

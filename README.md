@@ -22,18 +22,20 @@
 
 ---
 
-## 🔐 5-Persona Role-Based Access Control (RBAC), Sign-Up & Sign-In
+## 🔐 8 Dedicated Role Demo Accounts, Sign-In / Registration Portal & Connected Custom Usage Engine
 
-Every account is protected with cryptographic `scrypt` password hashing, `SHA-256` session tokens (`swkrent_session`), brute-force lockout protection, `@fastify/helmet`, and `@fastify/rate-limit`.
+Every account is protected with cryptographic `scrypt` password hashing, `SHA-256` session tokens (`swkrent_session`), brute-force lockout protection, `@fastify/helmet`, and `@fastify/rate-limit`. In addition, every user has a persistent **Connected Custom Usage Profile (`user_custom_usage`)** controlling their default cheque split, custom flat fee/commission override, preferred emirate, DIFC commute threshold, personal REST API key, custom webhook URL, WhatsApp pitch signature, and live usage telemetry counters (`GET /api/auth/custom-usage`, `POST /api/auth/custom-usage`, `POST /api/auth/custom-usage/track`).
 
-| Role | Demo Email | Demo Password | Key Capabilities |
+| Role & Persona | Demo Email | Demo Password | Connected Custom Usage & Key Capabilities |
 | :--- | :--- | :--- | :--- |
-| **`ADMIN`** | `admin@swk.rent` | `SwkRent2026!` | Full 1,000-User MVP cohort telemetry, OS REST API bridge config, compliance audit trail, workflow override. |
-| **`AGENT`** (SWK) | `advisor@swk.rent` | `SwkRent2026!` | `AED 0` CRM XML feed import, GPS key vault dispatch, 1-Tap WhatsApp client pitch, Stage 5 Ejari & Stage 7 NOC sign-off. |
-| **`AGENT`** (A2A) | `partner@apexcrest.ae` | `SwkRent2026!` | Protected 7-day A2A client registration & automated `50% Partner / 25% SWK / 25% Advisor` split lock. |
-| **`LANDLORD`** | `landlord@swk.rent` | `SwkRent2026!` | Direct Title Deed onboarding (`AED 0` landlord fee), Stage 3 1-Click Offer Approval, Reverse Brief bidding, PDC vault. |
-| **`DEVELOPER`** | `developer@selectgroup.ae` | `SwkRent2026!` | Bulk Tower Handover BTR Pools, FIFO Anti-Cannibalization public queue caps (`max 3 units/layout`), RERA yield floor protection. |
-| **`TENANT`** | `tenant@uaepass.ae` | `SwkRent2026!` | True Monthly Cost Calculator, Instant GPS/Smart-Lock viewings, 48h Offer Lock, Reverse Rental Briefs, RERA Renewal Shield. |
+| **`ADMIN` · SWK Managing Director** | `admin@swk.rent` | `SwkRent2026!` | Full 1,000-User MVP cohort telemetry, OS REST API bridge config, compliance audit trail, workflow override (`320` synced units, `AED 480k/yr` saved). |
+| **`AGENT` · SWK Exclusive Advisor** | `advisor@swk.rent` | `SwkRent2026!` | `AED 0` CRM XML feed import, 60-min GPS key vault dispatch, 1-Tap WhatsApp client pitch, `50/50` split (`48` synced units, `AED 84k/yr` saved). |
+| **`AGENT` · External A2A Partner** | `partner@apexcrest.ae` | `SwkRent2026!` | Protected 7-day A2A client registration & automated `50% Partner / 25% SWK / 25% Advisor` split lock (`64` synced units, `AED 112k/yr` saved). |
+| **`LANDLORD` · Direct Owner360 (Tier 1)** | `landlord@swk.rent` | `SwkRent2026!` | Direct Title Deed onboarding (`AED 0` landlord fee · Tenant pays flat `AED 2,999`), Stage 3 1-Click Offer Approval, 90-day RERA notice shield. |
+| **`LANDLORD` · Family Office (Tier 3)** | `familyoffice@swk.rent` | `SwkRent2026!` | Institutional portfolio owner receiving `100% 1-Cheque Upfront Day-1 Payout` while tenants pay `12x Monthly UAEDDS` (`14` active units). |
+| **`DEVELOPER` · BTR Handover Director** | `developer@selectgroup.ae` | `SwkRent2026!` | Bulk Tower Handover BTR Pools, FIFO Anti-Cannibalization public queue caps (`max 3 units/layout`), RERA yield floor guard (`AED 240k/yr` saved). |
+| **`TENANT` · UAE PASS Executive** | `tenant@uaepass.ae` | `SwkRent2026!` | `12x Monthly UAEDDS` autopay, True Monthly All-In Cost Calculator, Instant GPS/Smart-Lock viewings, 48h Offer Lock, RERA Renewal Shield. |
+| **`TENANT` · New Expat 30-Day Bridge** | `expat@swk.rent` | `SwkRent2026!` | `30-Day DTCM Bridge-to-Ejari` legal entry with Passport + Visa Application Receipt while Emirates ID & UAE bank account clear. |
 
 ---
 

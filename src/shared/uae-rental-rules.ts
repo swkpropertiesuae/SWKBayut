@@ -479,9 +479,53 @@ export interface VerifiedTenantBrief {
 }
 
 // ------------------------------------------------------------------
-// NEW SUPER-ENGINE 4: Role-Based Access Control (RBAC) & 5 UAE Personas
+// NEW SUPER-ENGINE 4: Role-Based Access Control (RBAC), 8 Dedicated Demo Personas & Custom Usage
 // ------------------------------------------------------------------
 export type UserRole = 'TENANT' | 'LANDLORD' | 'AGENT' | 'DEVELOPER' | 'ADMIN'
+
+export interface UserCustomUsageProfile {
+  userId: number
+  userEmail: string
+  personaCode: string
+  personaBadge: string
+  customPlanName: string
+  customPlanTier: string
+  commissionSplitRatio: string
+  defaultChequeMode: ChequeOption
+  preferredEmirate: 'All' | 'Dubai' | 'Abu Dhabi'
+  chillerFreePreferred: boolean
+  maxCommuteDifcMins: number
+  customCommissionPct: number
+  customFlatFeeAed: number
+  fifoQueueCapUnits: number
+  btrFifoQueueCap: number
+  personalApiKeyMasked: string
+  personalApiKey: string
+  customWebhookUrl: string
+  whatsappPitchSignature: string
+  ejariAutopilotEnabled: boolean
+  rera90DayShieldEnabled: boolean
+  pdcBounceShieldEnabled: boolean
+  listingsSyncedCount: number
+  portalCreditBurnAed: number
+  estimatedCompetitorSpendSavedAed: number
+  viewingsBookedOrDispatched: number
+  digitalOffersSubmittedOrReviewed: number
+  workflowsSignedOffCount: number
+  whatsappPitchesGenerated: number
+  apiWebhookEventsCount: number
+  usageMetrics: {
+    listingsSyncedCount: number
+    portalCreditBurnAed: number
+    estimatedCompetitorSpendSavedAed: number
+    viewingsBookedOrDispatched: number
+    digitalOffersSubmittedOrReviewed: number
+    workflowsSignedOffCount: number
+    whatsappPitchesGenerated: number
+    apiWebhookEventsCount: number
+  }
+  updatedAt: string
+}
 
 export interface AuthUser {
   id: number
@@ -496,6 +540,7 @@ export interface AuthUser {
   agencyOrCompanyName?: string | null
   titleDeedRef?: string | null
   createdAt: string
+  customUsage?: UserCustomUsageProfile
 }
 
 export type RbacAction =

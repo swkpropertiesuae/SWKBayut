@@ -50,9 +50,77 @@ import {
   evaluateReraRenewal,
 } from '@shared/uae-rental-rules'
 
-type ActiveTab = 'marketplace' | 'buildings' | 'superhub' | 'workflow' | 'shield' | 'partners'
+type ActiveTab = 'marketplace' | 'buildings' | 'superhub' | 'workflow' | 'shield' | 'partners' | 'auth'
 
 const aed = (n: number) => `AED ${Math.round(n || 0).toLocaleString('en-US')}`
+
+const DEDICATED_DEMO_PERSONA_META: Record<
+  string,
+  {
+    badge: string
+    personaTitle: string
+    highlightColor: string
+    keySuperpower: string
+    competitorEdge: string
+  }
+> = {
+  'admin@swk.rent': {
+    badge: 'ADMIN · ORN 51517 MASTER',
+    personaTitle: 'SWK Managing Director & Compliance Desk',
+    highlightColor: 'border-[#B89040] bg-[#17191C] text-white',
+    keySuperpower: 'Full 7-Stage Deal Override · Escrow Release · External OS REST API & Webhook Control',
+    competitorEdge: 'Zero portal tax; manages 320+ verified mandates with automated DLD/RERA compliance gates.',
+  },
+  'advisor@swk.rent': {
+    badge: 'AGENT · SWK EXCLUSIVE ADVISOR',
+    personaTitle: 'Senior RERA Advisor (Key Vault & GPS Dispatch)',
+    highlightColor: 'border-[#B89040]/60 bg-[#FBF8F1] text-[#17191C]',
+    keySuperpower: '60-Min Key Vault Dispatch · 50/50 Commission Split · Watermark-Free WhatsApp Pitch Deck',
+    competitorEdge: 'Saves AED 84,000/yr vs legacy portal packages with AED 0 credit burn & BRN attribution lock.',
+  },
+  'partner@apexcrest.ae': {
+    badge: 'AGENT · EXTERNAL A2A PARTNER BROKER',
+    personaTitle: 'Partner Agency Director (A2A Co-Broking Desk)',
+    highlightColor: 'border-[#17625F]/50 bg-[#FBF8F1] text-[#17191C]',
+    keySuperpower: 'Protected 50% Partner / 50% SWK Commission Certificate · AED 0 XML CRM Feed Sync',
+    competitorEdge: 'Saves AED 112,000/yr vs Property Finder/Dubizzle; zero lead hijacking with 7-day A2A lock.',
+  },
+  'landlord@swk.rent': {
+    badge: 'LANDLORD · DIRECT OWNER360 (TIER 1)',
+    personaTitle: 'Direct Title-Deed Landlord (AED 0 Landlord Fee)',
+    highlightColor: 'border-[#17625F] bg-[#FBF8F1] text-[#17191C]',
+    keySuperpower: 'AED 0 Landlord Listing Fee · Tenant Pays Flat AED 2,999 · 90-Day RERA Renewal Autopilot',
+    competitorEdge: 'Eliminates 5% broker commission drag for price-sensitive tenants while protecting Title Deed privacy.',
+  },
+  'familyoffice@swk.rent': {
+    badge: 'LANDLORD · INSTITUTIONAL FAMILY OFFICE (TIER 3)',
+    personaTitle: 'Multi-Unit Royal & Family Office Portfolio Owner',
+    highlightColor: 'border-[#9E7628] bg-[#FBF8F1] text-[#17191C]',
+    keySuperpower: '100% 1-Cheque Upfront Day-1 Rent Payout while Tenants Pay 12x Monthly UAEDDS',
+    competitorEdge: 'Zero cheque bounce risk + automated Article 16 landlord/tenant maintenance cap enforcement.',
+  },
+  'developer@selectgroup.ae': {
+    badge: 'DEVELOPER · BTR BULK HANDOVER DESK',
+    personaTitle: 'Director of Institutional BTR Tower Lease-Up',
+    highlightColor: 'border-[#B89040] bg-[#FBF8F1] text-[#17191C]',
+    keySuperpower: 'FIFO Anti-Cannibalization Queue (Max 3 Public Units/Layout) · RERA Floor Rent Guard',
+    competitorEdge: 'Prevents 200+ handover units from undercutting each other on public portals; saves AED 240,000/yr.',
+  },
+  'tenant@uaepass.ae': {
+    badge: 'TENANT · UAE PASS EXECUTIVE RENTER',
+    personaTitle: 'Verified Corporate Executive Tenant (DIFC / Marina)',
+    highlightColor: 'border-emerald-600/50 bg-[#FBF8F1] text-[#17191C]',
+    keySuperpower: '12x Monthly UAEDDS Autopay · True Monthly All-In Cost · 1-ClickAED 2,000 48h Unit Lock',
+    competitorEdge: 'Exposes hidden chiller/DEWA/muni costs upfront and blocks illegal Decree 43/2013 rent hikes.',
+  },
+  'expat@swk.rent': {
+    badge: 'TENANT · NEW EXPAT 30-DAY BRIDGE PASS',
+    personaTitle: 'Newly Relocated International Executive (EID In-Process)',
+    highlightColor: 'border-amber-600/50 bg-[#FBF8F1] text-[#17191C]',
+    keySuperpower: '30-Day DTCM Bridge-to-Ejari Legal Entry with Passport + Visa Application Receipt',
+    competitorEdge: 'Solves the #1 UAE expat catch-22 (move in legally on Day 1 while Emirates ID & bank cheque book clear).',
+  },
+}
 
 const SUPPLY_BADGES: Record<
   SupplyTier,
@@ -119,6 +187,8 @@ export default function App() {
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
   const [loginEmail, setLoginEmail] = useState('tenant@uaepass.ae')
   const [loginPassword, setLoginPassword] = useState('SwkRent2026!')
+  const [showPassword, setShowPassword] = useState(false)
+  const [demoRoleFilter, setDemoRoleFilter] = useState<'ALL' | UserRole>('ALL')
 
   // Signup Form State
   const [signupFullName, setSignupFullName] = useState('')
@@ -131,6 +201,22 @@ export default function App() {
   const [signupReraOrn, setSignupReraOrn] = useState('ORN-51517')
   const [signupCompany, setSignupCompany] = useState('SWK Properties L.L.C.')
   const [signupTitleDeed, setSignupTitleDeed] = useState('TD-DXB-2026-44109')
+
+  // Connected Custom Usage Studio State (Per-Account Custom Rules, API Key & Telemetry)
+  const [cuPlanTier, setCuPlanTier] = useState('UAE PASS Verified Tenant — 12x Monthly UAEDDS & RERA Shield')
+  const [cuDefaultCheque, setCuDefaultCheque] = useState<ChequeOption>(12)
+  const [cuPreferredEmirate, setCuPreferredEmirate] = useState<'All' | 'Dubai' | 'Abu Dhabi'>('All')
+  const [cuChillerFree, setCuChillerFree] = useState(false)
+  const [cuMaxCommute, setCuMaxCommute] = useState(90)
+  const [cuFlatFee, setCuFlatFee] = useState(2999)
+  const [cuCommPct, setCuCommPct] = useState(5)
+  const [cuSplitRatio, setCuSplitRatio] = useState('Flat AED 2,999 Direct Landlord / 5% Standard Agency')
+  const [cuBtrQueueCap, setCuBtrQueueCap] = useState(3)
+  const [cuWebhookUrl, setCuWebhookUrl] = useState('https://api.os.swk.rent/webhooks/tenant-events')
+  const [cuWhatsappSig, setCuWhatsappSig] = useState('Verified via UAE PASS on swk.rent · ORN 51517')
+  const [cuEjariAutopilot, setCuEjariAutopilot] = useState(true)
+  const [cuRera90DayShield, setCuRera90DayShield] = useState(true)
+  const [cuPdcBounceShield, setCuPdcBounceShield] = useState(true)
 
   // 7-Stage Deal Workflow New Deal, OS REST API Config & Icon Variant State
   const [wfUnitId, setWfUnitId] = useState(1)
@@ -242,6 +328,37 @@ export default function App() {
     setTimeout(() => setToast(null), 5500)
   }
 
+  const applyUserCustomUsageToWorkspace = (user: AuthUser | null) => {
+    if (!user) return
+    setOfferTenantName(user.fullName)
+    setViewingName(user.fullName)
+    if (user.phone) {
+      setOfferTenantPhone(user.phone)
+      setViewingPhone(user.phone)
+    }
+    const cu = user.customUsage
+    if (!cu) return
+    setChequeMode(cu.defaultChequeMode)
+    setOfferCheques(cu.defaultChequeMode)
+    setSelectedEmirate(cu.preferredEmirate)
+    setChillerFreeOnly(cu.chillerFreePreferred)
+    setMaxDifcCommute(cu.maxCommuteDifcMins)
+    setCuPlanTier(cu.customPlanTier)
+    setCuDefaultCheque(cu.defaultChequeMode)
+    setCuPreferredEmirate(cu.preferredEmirate)
+    setCuChillerFree(cu.chillerFreePreferred)
+    setCuMaxCommute(cu.maxCommuteDifcMins)
+    setCuFlatFee(cu.customFlatFeeAed)
+    setCuCommPct(cu.customCommissionPct)
+    setCuSplitRatio(cu.commissionSplitRatio)
+    setCuBtrQueueCap(cu.btrFifoQueueCap)
+    setCuWebhookUrl(cu.customWebhookUrl)
+    setCuWhatsappSig(cu.whatsappPitchSignature)
+    setCuEjariAutopilot(cu.ejariAutopilotEnabled)
+    setCuRera90DayShield(cu.rera90DayShieldEnabled)
+    setCuPdcBounceShield(cu.pdcBounceShieldEnabled)
+  }
+
   const apiFetch = async (url: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers || {})
     if (sessionToken) headers.set('x-swk-session', sessionToken)
@@ -260,6 +377,7 @@ export default function App() {
       if (json.currentUser) {
         setCurrentUser(json.currentUser)
         setActiveRole(json.currentUser.role)
+        applyUserCustomUsageToWorkspace(json.currentUser)
       }
       if (json.osBridge?.osApiUrl) {
         setOsApiUrlInput(json.osBridge.osApiUrl)
@@ -332,20 +450,31 @@ export default function App() {
   const copyWhatsAppClientPitch = (u: RentalUnit) => {
     const cost = calculateTrueRentalCost(u, chequeMode)
     const bld = buildingsById.get(u.buildingId)
+    const customSig =
+      currentUser?.customUsage?.whatsappPitchSignature ||
+      cuWhatsappSig ||
+      'Verified on https://swk.rent · ORN 51517'
     const pitch = [
       `✨ *SWK Verified Rental Pitch (${u.unitCode})*`,
       `🏢 *${u.buildingName} · Unit #${u.unitNo}* (${u.community})`,
       `🛏 ${u.bedrooms === 0 ? 'Studio' : `${u.bedrooms} BR`} · ${u.bathrooms} Bath · ${u.areaSqft} sqft · ${u.furnishing}`,
-      `💰 *Headline Rent:* ${aed(cost.annualHeadlineRent)}/yr (${chequeMode === 12 ? '12 Monthly UAEDDS' : `${chequeMode} Cheques`})`,
+      `💰 *Headline Rent:* ${aed(cost.annualHeadlineRent)}/yr (${chequeMode === 12 ? '12 Monthly UAEDDS' : chequeMode === 30 ? '30-Day New Expat Bridge' : `${chequeMode} Cheques`})`,
       `📊 *True Monthly All-In:* ${aed(cost.trueMonthlyAllInOperatingCostAed)}/mo (Includes Chiller: ${u.chillerProvider}, DEWA & 5% Muni)`,
       `🔑 *Viewing:* ${u.keyCustody} | 🚇 DIFC: ${bld?.commuteDifcMins ?? 18} mins`,
-      `🛡 *DLD Permit:* #${u.trakheesiPermitNo} | Protected 50/50 A2A & RERA Shield`,
+      `🛡 *DLD Permit:* #${u.trakheesiPermitNo} | ${customSig}`,
       `👉 Book Instant GPS Viewing or Lock Unit for 48h on https://swk.rent`,
     ].join('\n')
     if (navigator.clipboard) {
       void navigator.clipboard.writeText(pitch)
     }
-    showNotice('ok', `Client WhatsApp Pitch Deck copied for ${u.buildingName} #${u.unitNo} (with BRN Commission Lock)!`)
+    if (currentUser) {
+      void apiFetch('/api/auth/custom-usage/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metric: 'whatsappPitchesGenerated', delta: 1 }),
+      }).then(() => refreshData())
+    }
+    showNotice('ok', `Client WhatsApp Pitch Deck copied for ${u.buildingName} #${u.unitNo} with Custom Usage Signature!`)
   }
 
   const openOfferModal = (u: RentalUnit) => {
@@ -379,11 +508,69 @@ export default function App() {
     setCurrentUser(json.user)
     setActiveRole(json.user.role)
     setSessionToken(json.sessionToken)
+    applyUserCustomUsageToWorkspace(json.user)
     try {
       localStorage.setItem('swkrent_session_token', json.sessionToken)
     } catch {}
     setAuthModalOpen(false)
-    showNotice('ok', `Signed in as ${json.user.fullName} [${json.user.role}]`)
+    showNotice(
+      'ok',
+      `Signed in as ${json.user.fullName} [${json.user.role}] — Custom Usage (${json.user.customUsage?.customPlanTier || 'Active'}) connected!`,
+    )
+    await refreshData(json.sessionToken)
+  }
+
+  const handleDemoAccountLogin = async (email: string) => {
+    setLoginEmail(email)
+    setLoginPassword('SwkRent2026!')
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ demoEmail: email }),
+    })
+    const json = await res.json()
+    if (!res.ok || !json.user) {
+      showNotice('err', json.error || `Could not sign in to demo account ${email}`)
+      return
+    }
+    setCurrentUser(json.user)
+    setActiveRole(json.user.role)
+    setSessionToken(json.sessionToken)
+    applyUserCustomUsageToWorkspace(json.user)
+    try {
+      localStorage.setItem('swkrent_session_token', json.sessionToken)
+    } catch {}
+    setAuthModalOpen(false)
+    showNotice(
+      'ok',
+      `Switched to Dedicated Demo Account: ${json.user.fullName} (${json.user.email}) · Custom Usage Connected!`,
+    )
+    await refreshData(json.sessionToken)
+  }
+
+  const handleUaePassLogin = async (email?: string) => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uaePassQuickAuth: true, email: email || loginEmail }),
+    })
+    const json = await res.json()
+    if (!res.ok || !json.user) {
+      showNotice('err', json.error || 'UAE PASS Digital Identity authentication failed')
+      return
+    }
+    setCurrentUser(json.user)
+    setActiveRole(json.user.role)
+    setSessionToken(json.sessionToken)
+    applyUserCustomUsageToWorkspace(json.user)
+    try {
+      localStorage.setItem('swkrent_session_token', json.sessionToken)
+    } catch {}
+    setAuthModalOpen(false)
+    showNotice(
+      'ok',
+      `UAE PASS Biometric Session Verified: ${json.user.fullName} (${json.user.emiratesIdOrPassport})!`,
+    )
     await refreshData(json.sessionToken)
   }
 
@@ -398,10 +585,14 @@ export default function App() {
       setCurrentUser(json.user)
       setActiveRole(json.user.role)
       setSessionToken(json.sessionToken)
+      applyUserCustomUsageToWorkspace(json.user)
       try {
         localStorage.setItem('swkrent_session_token', json.sessionToken)
       } catch {}
-      showNotice('ok', `Switched Active RBAC Persona to ${json.user.fullName} (${ROLE_CAPABILITIES[role].label})`)
+      showNotice(
+        'ok',
+        `Switched Active RBAC Persona to ${json.user.fullName} (${ROLE_CAPABILITIES[role].label}) · Custom Usage Synced`,
+      )
       await refreshData(json.sessionToken)
     } else {
       setActiveRole(role)
@@ -425,6 +616,17 @@ export default function App() {
         reraOrn: signupRole === 'AGENT' ? signupReraOrn : undefined,
         agencyOrCompanyName: signupCompany,
         titleDeedRef: signupRole === 'LANDLORD' ? signupTitleDeed : undefined,
+        customPlanTier: cuPlanTier,
+        defaultChequeMode: cuDefaultCheque,
+        preferredEmirate: cuPreferredEmirate,
+        chillerFreePreferred: cuChillerFree,
+        maxCommuteDifcMins: cuMaxCommute,
+        customFlatFeeAed: cuFlatFee,
+        customCommissionPct: cuCommPct,
+        commissionSplitRatio: cuSplitRatio,
+        btrFifoQueueCap: cuBtrQueueCap,
+        customWebhookUrl: cuWebhookUrl,
+        whatsappPitchSignature: cuWhatsappSig,
       }),
     })
     const json = await res.json()
@@ -435,12 +637,79 @@ export default function App() {
     setCurrentUser(json.user)
     setActiveRole(json.user.role)
     setSessionToken(json.sessionToken)
+    applyUserCustomUsageToWorkspace(json.user)
     try {
       localStorage.setItem('swkrent_session_token', json.sessionToken)
     } catch {}
     setAuthModalOpen(false)
-    showNotice('ok', `Welcome to swk.rent MVP Cohort, ${json.user.fullName} (${json.user.role})!`)
+    showNotice(
+      'ok',
+      `Welcome to swk.rent MVP Cohort, ${json.user.fullName} (${json.user.role}) — Custom Usage Profile Connected!`,
+    )
     await refreshData(json.sessionToken)
+  }
+
+  const handleSaveCustomUsage = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await apiFetch('/api/auth/custom-usage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: currentUser?.id,
+        customPlanTier: cuPlanTier,
+        defaultChequeMode: cuDefaultCheque,
+        preferredEmirate: cuPreferredEmirate,
+        chillerFreePreferred: cuChillerFree,
+        maxCommuteDifcMins: cuMaxCommute,
+        customFlatFeeAed: cuFlatFee,
+        customCommissionPct: cuCommPct,
+        commissionSplitRatio: cuSplitRatio,
+        btrFifoQueueCap: cuBtrQueueCap,
+        customWebhookUrl: cuWebhookUrl,
+        whatsappPitchSignature: cuWhatsappSig,
+        ejariAutopilotEnabled: cuEjariAutopilot,
+        rera90DayShieldEnabled: cuRera90DayShield,
+        pdcBounceShieldEnabled: cuPdcBounceShield,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not save custom usage profile')
+      return
+    }
+    setChequeMode(cuDefaultCheque)
+    setSelectedEmirate(cuPreferredEmirate)
+    setChillerFreeOnly(cuChillerFree)
+    setMaxDifcCommute(cuMaxCommute)
+    showNotice(
+      'ok',
+      `Custom Usage Profile saved & connected live to Marketplace, Fee Calculator & WhatsApp Pitch Engine!`,
+    )
+    await refreshData()
+  }
+
+  const handleTrackUsageEvent = async (
+    metric:
+      | 'listingsSyncedCount'
+      | 'viewingsBookedOrDispatched'
+      | 'digitalOffersSubmittedOrReviewed'
+      | 'workflowsSignedOffCount'
+      | 'whatsappPitchesGenerated'
+      | 'apiWebhookEventsCount',
+    label: string,
+  ) => {
+    const res = await apiFetch('/api/auth/custom-usage/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: currentUser?.id, metric, delta: 1 }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not track usage event')
+      return
+    }
+    showNotice('ok', `Live Custom Usage Telemetry Incremented: ${label} (+1 persisted in SQLite)`)
+    await refreshData()
   }
 
   const handleLogout = async () => {
@@ -941,6 +1210,17 @@ export default function App() {
               <Handshake size={14} />
               6. Landlords & A2A
             </button>
+            <button
+              onClick={() => setActiveTab('auth')}
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                activeTab === 'auth'
+                  ? 'swk-gold-gradient text-[#17191C] shadow'
+                  : 'text-[#D6B46C] hover:text-white bg-[#B89040]/15 border border-[#D6B46C]/50'
+              }`}
+            >
+              <KeyRound size={14} />
+              7. Sign In / Register & Demo Hub
+            </button>
           </nav>
         </div>
 
@@ -972,19 +1252,40 @@ export default function App() {
                   {p.label}
                 </button>
               ))}
+              <button
+                onClick={() => setActiveTab('auth')}
+                className="px-2.5 py-1 rounded-lg font-bold text-[11px] bg-[#17625F] text-white border border-emerald-400/40 hover:bg-[#124e4b] transition"
+              >
+                8 Dedicated Demo Accounts →
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <span className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-400/30 text-[11px] font-semibold">
                 <BadgeCheck size={13} />
-                MVP Cohort: {data?.mvpTelemetry?.registeredUsersCount ?? 6} / 1,000 Users ({data?.mvpTelemetry?.remainingEarlyAdopterSlots ?? 994} Slots Open)
+                MVP Cohort: {data?.mvpTelemetry?.registeredUsersCount ?? 8} / 1,000 Users ({data?.mvpTelemetry?.remainingEarlyAdopterSlots ?? 992} Slots Open)
               </span>
 
               {currentUser ? (
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-1 rounded-lg bg-[#22262B] border border-[#B89040]/40 text-white font-semibold text-[11px]">
-                    {currentUser.fullName} · <strong className="text-[#D6B46C]">{currentUser.role}</strong>
-                  </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={() => setActiveTab('auth')}
+                    className="px-2.5 py-1 rounded-lg bg-[#22262B] border border-[#B89040]/50 text-white font-semibold text-[11px] hover:border-[#D6B46C] flex items-center gap-1.5"
+                    title="Open Connected Custom Usage & Account Studio"
+                  >
+                    <KeyRound size={12} className="text-[#D6B46C]" />
+                    <span>{currentUser.fullName}</span>
+                    <strong className="text-[#D6B46C]">[{currentUser.role}]</strong>
+                    <span className="hidden sm:inline text-[10px] text-emerald-300">
+                      · Custom Usage Active
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('auth')}
+                    className="px-2.5 py-1 rounded-lg swk-gold-gradient text-[#17191C] font-extrabold text-[11px]"
+                  >
+                    Custom Usage & Switch Account
+                  </button>
                   <button
                     onClick={handleLogout}
                     className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200 font-semibold text-[11px]"
@@ -997,20 +1298,20 @@ export default function App() {
                   <button
                     onClick={() => {
                       setAuthMode('signin')
-                      setAuthModalOpen(true)
+                      setActiveTab('auth')
                     }}
                     className="px-3 py-1 rounded-lg bg-[#22262B] border border-[#D6B46C]/50 text-[#D6B46C] font-bold text-[11px] hover:bg-white/10"
                   >
-                    Sign In
+                    Sign In & 8 Demo Accounts
                   </button>
                   <button
                     onClick={() => {
                       setAuthMode('signup')
-                      setAuthModalOpen(true)
+                      setActiveTab('auth')
                     }}
                     className="px-3 py-1 rounded-lg swk-gold-gradient text-[#17191C] font-extrabold text-[11px] shadow"
                   >
-                    Sign Up (First 1,000 MVP)
+                    Register + Custom Usage (First 1,000 MVP)
                   </button>
                 </div>
               )}
@@ -1020,7 +1321,7 @@ export default function App() {
       </header>
 
       {/* Mobile Bottom Navigation Bar (100% Mobile-Friendly Interface) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#17191C] text-white border-t border-[#B89040]/40 grid grid-cols-6 py-1.5 px-1 shadow-2xl">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#17191C] text-white border-t border-[#B89040]/40 grid grid-cols-7 py-1.5 px-1 shadow-2xl">
         {(
           [
             { id: 'marketplace', label: 'Rentals', icon: Search },
@@ -1029,6 +1330,7 @@ export default function App() {
             { id: 'workflow', label: 'Workflow', icon: Layers },
             { id: 'shield', label: 'Shield', icon: ShieldCheck },
             { id: 'partners', label: 'A2A/Owner', icon: Handshake },
+            { id: 'auth', label: 'Sign In', icon: KeyRound },
           ] as const
         ).map(tab => {
           const Icon = tab.icon
@@ -1073,6 +1375,50 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="flex-1 max-w-[1640px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-6">
+        {/* Live Connected Custom Usage & 8 Dedicated Demo Accounts Quick Ribbon */}
+        <section className="bg-white rounded-2xl p-3 sm:p-4 border border-[#D6B46C]/60 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-2.5 py-1 rounded-lg bg-[#17191C] text-[#D6B46C] font-extrabold text-[11px] flex items-center gap-1.5">
+              <Zap size={13} />
+              Connected Custom Usage:
+            </span>
+            <span className="font-bold text-[#17191C]">
+              {currentUser ? `${currentUser.fullName} (${currentUser.email})` : `Demo Role: ${effectiveRole}`}
+            </span>
+            <span className="px-2 py-0.5 rounded bg-[#FBF8F1] border border-[#E5DEC9] text-[#7C5D1E] font-semibold text-[11px]">
+              {currentUser?.customUsage?.customPlanTier ?? cuPlanTier}
+            </span>
+            <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold text-[11px]">
+              Default: {chequeMode === 12 ? '12x Monthly UAEDDS' : chequeMode === 30 ? '30-Day Expat Bridge' : `${chequeMode} Cheques`} · Fee: {aed(currentUser?.customUsage?.customFlatFeeAed ?? cuFlatFee)} / {currentUser?.customUsage?.customCommissionPct ?? cuCommPct}%
+            </span>
+            <span className="hidden xl:inline px-2 py-0.5 rounded bg-gray-100 text-gray-700 font-mono text-[10px]">
+              API Key: {currentUser?.customUsage?.personalApiKey ?? 'swk_live_orn51517_verified'}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => {
+                setAuthMode('signin')
+                setActiveTab('auth')
+              }}
+              className="px-3 py-1.5 rounded-xl bg-[#17191C] text-[#D6B46C] font-extrabold text-[11px] hover:bg-black transition flex items-center gap-1.5"
+            >
+              <KeyRound size={13} />
+              Open Full Sign-In, Register & 8 Demo Accounts Hub
+            </button>
+            <button
+              onClick={() => {
+                setAuthMode('signup')
+                setActiveTab('auth')
+              }}
+              className="px-3 py-1.5 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold text-[11px] shadow"
+            >
+              + Register New Account
+            </button>
+          </div>
+        </section>
+
         {/* ============================================================
             MODULE 1: PUBLIC VERIFIED RENTAL MARKETPLACE & TRUE COST ENGINE
            ============================================================ */}
@@ -3070,10 +3416,1025 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* ============================================================
+            MODULE 7: PRODUCTION SIGN-IN, REGISTRATION, 8 DEDICATED DEMO
+            ACCOUNTS & CONNECTED CUSTOM USAGE COMMAND CENTER
+           ============================================================ */}
+        {activeTab === 'auth' && (
+          <div className="space-y-6">
+            {/* Hero Banner */}
+            <section className="swk-obsidian-card text-white rounded-2xl p-5 sm:p-7 border border-[#B89040]/50 shadow-2xl">
+              <div className="grid lg:grid-cols-12 gap-6 items-center">
+                <div className="lg:col-span-8 space-y-3">
+                  <div className="inline-flex flex-wrap items-center gap-2 px-3 py-1 rounded-full bg-[#B89040]/20 border border-[#B89040]/40 text-[#D6B46C] text-xs font-bold">
+                    <KeyRound size={14} />
+                    SWK RENT Identity, 8 Dedicated Role Demo Accounts & Connected Custom Usage Engine
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                    Sign In, Register, or Instant-Switch Across{' '}
+                    <span className="text-[#D6B46C]">8 Dedicated UAE Rental Personas</span>
+                  </h2>
+                  <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
+                    Every account on <strong className="text-white">swk.rent</strong> is directly wired to a persistent{' '}
+                    <strong className="text-[#D6B46C]">Custom Usage Profile</strong> in SQLite — controlling your default
+                    cheque split (<code className="text-emerald-300">1 / 2 / 4 / 12x UAEDDS / 30-Day Expat Bridge</code>),
+                    custom flat fee or commission split, DIFC commute filter, personal REST API key, webhook endpoint,
+                    WhatsApp client pitch signature, and live AED 0 portal credit telemetry.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
+                    <span className="px-3 py-1 rounded-lg bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 font-bold">
+                      ✓ 8 Dedicated Demo Accounts (All 5 RBAC Roles + Sub-Personas)
+                    </span>
+                    <span className="px-3 py-1 rounded-lg bg-white/10 border border-white/15 text-gray-200 font-semibold">
+                      ✓ 1-Tap UAE PASS Digital Identity + RERA BRN/ORN + Title Deed Check
+                    </span>
+                    <span className="px-3 py-1 rounded-lg bg-[#B89040]/20 border border-[#D6B46C]/40 text-[#D6B46C] font-bold">
+                      ✓ AED 0 Portal Credit Burn vs AED 95k–240k/yr Legacy Portals
+                    </span>
+                  </div>
+                </div>
+
+                {/* Active Session & Connected Custom Usage Summary Box */}
+                <div className="lg:col-span-4 bg-[#22262B] p-4 rounded-xl border border-[#B89040]/40 space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#D6B46C]">
+                      Active Connected Session
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[10px] font-bold">
+                      {currentUser ? 'ENCRYPTED SESSION ACTIVE' : `DEMO PERSONA (${effectiveRole})`}
+                    </span>
+                  </div>
+                  <div className="font-extrabold text-base text-white">
+                    {currentUser ? currentUser.fullName : `Active Role: ${effectiveRole}`}
+                  </div>
+                  <div className="text-gray-300 text-[11px]">
+                    Email: <strong className="text-white">{currentUser?.email ?? loginEmail}</strong> · Role:{' '}
+                    <strong className="text-[#D6B46C]">{effectiveRole}</strong>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-[#17191C] border border-white/10 space-y-1 text-[11px]">
+                    <div className="text-[#D6B46C] font-bold">
+                      {currentUser?.customUsage?.customPlanTier ?? cuPlanTier}
+                    </div>
+                    <div className="text-gray-300">
+                      Split / Fee Rule:{' '}
+                      <strong className="text-white">
+                        {currentUser?.customUsage?.commissionSplitRatio ?? cuSplitRatio}
+                      </strong>
+                    </div>
+                    <div className="text-emerald-400 font-semibold">
+                      Portal Credit Burn: AED 0 · Saved vs Competitors:{' '}
+                      {aed(currentUser?.customUsage?.estimatedCompetitorSpendSavedAed ?? 84000)}/yr
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* ============================================================
+                SECTION 1: 8 DEDICATED DEMO ACCOUNTS MATRIX (ALL ROLES)
+               ============================================================ */}
+            <section className="bg-white rounded-2xl p-5 sm:p-6 border border-[#E5DEC9] shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#9E7628]">
+                    Instant 1-Click Role & Persona Switching · Password for All Demo Accounts: SwkRent2026!
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-extrabold text-[#17191C]">
+                    8 Dedicated Demo Accounts Across All 5 UAE Rental Roles (Connected to Custom Usage)
+                  </h3>
+                </div>
+
+                {/* Role Filter Pills */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  {(
+                    [
+                      { id: 'ALL', label: 'All 8 Accounts' },
+                      { id: 'TENANT', label: 'Tenants (2)' },
+                      { id: 'LANDLORD', label: 'Landlords (2)' },
+                      { id: 'AGENT', label: 'RERA Agents (2)' },
+                      { id: 'DEVELOPER', label: 'Developer (1)' },
+                      { id: 'ADMIN', label: 'SWK Admin (1)' },
+                    ] as const
+                  ).map(f => (
+                    <button
+                      key={f.id}
+                      onClick={() => setDemoRoleFilter(f.id)}
+                      className={`px-3 py-1.5 rounded-xl font-bold text-xs transition border ${
+                        demoRoleFilter === f.id
+                          ? 'bg-[#17191C] text-[#D6B46C] border-[#B89040]'
+                          : 'bg-[#FBF8F1] text-gray-700 border-[#E5DEC9] hover:border-[#B89040]'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+                {(data?.demoUsers ?? [])
+                  .filter(u => demoRoleFilter === 'ALL' || u.role === demoRoleFilter)
+                  .map(u => {
+                    const meta = DEDICATED_DEMO_PERSONA_META[u.email] ?? {
+                      badge: `${u.role} · VERIFIED DEMO`,
+                      personaTitle: ROLE_CAPABILITIES[u.role]?.label ?? u.role,
+                      highlightColor: 'border-[#E5DEC9] bg-[#FBF8F1] text-[#17191C]',
+                      keySuperpower: 'Full RBAC workflow & custom usage telemetry connected.',
+                      competitorEdge: 'AED 0 portal listing fee & verified UAE PASS identity.',
+                    }
+                    const isCurrentAccount = currentUser?.email?.toLowerCase() === u.email.toLowerCase()
+                    const cu = u.customUsage
+                    return (
+                      <div
+                        key={u.id}
+                        className={`rounded-2xl p-4 border-2 transition flex flex-col justify-between space-y-3 ${
+                          isCurrentAccount
+                            ? 'border-[#17625F] bg-[#F3FAF9] shadow-lg ring-2 ring-[#17625F]/20'
+                            : 'border-[#E5DEC9] bg-[#FBF8F1] hover:border-[#B89040] shadow-sm'
+                        }`}
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="px-2.5 py-0.5 rounded-full bg-[#17191C] text-[#D6B46C] font-extrabold text-[10px] tracking-wide">
+                              {meta.badge}
+                            </span>
+                            {isCurrentAccount && (
+                              <span className="px-2 py-0.5 rounded-full bg-[#17625F] text-white font-bold text-[10px] flex items-center gap-1">
+                                <CheckCircle2 size={11} /> Active Account
+                              </span>
+                            )}
+                          </div>
+
+                          <div>
+                            <h4 className="font-extrabold text-sm sm:text-base text-[#17191C]">{u.fullName}</h4>
+                            <p className="text-[11px] font-semibold text-[#9E7628]">{meta.personaTitle}</p>
+                            <p className="text-[11px] text-gray-600">{u.agencyOrCompanyName}</p>
+                          </div>
+
+                          {/* Credentials & Regulatory IDs */}
+                          <div className="p-2.5 rounded-xl bg-white border border-[#E5DEC9] text-[11px] space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-500">Email:</span>
+                              <code className="font-bold text-[#17191C]">{u.email}</code>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-500">Password:</span>
+                              <code className="font-bold text-[#17625F]">SwkRent2026!</code>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-500">UAE PASS / ID:</span>
+                              <span className="font-semibold text-gray-800">{u.emiratesIdOrPassport}</span>
+                            </div>
+                            {u.reraBrn && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-500">RERA BRN / ORN:</span>
+                                <span className="font-bold text-[#9E7628]">
+                                  {u.reraBrn} · {u.reraOrn}
+                                </span>
+                              </div>
+                            )}
+                            {u.titleDeedRef && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-500">Title Deed Ref:</span>
+                                <span className="font-bold text-[#17625F]">{u.titleDeedRef}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Connected Custom Usage Profile Summary */}
+                          {cu && (
+                            <div className="p-2.5 rounded-xl bg-[#17191C] text-white text-[11px] space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[#D6B46C] font-bold uppercase text-[10px]">
+                                  Connected Custom Usage
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
+                                  {cu.defaultChequeMode === 12
+                                    ? '12x UAEDDS'
+                                    : cu.defaultChequeMode === 30
+                                      ? '30d Expat Bridge'
+                                      : `${cu.defaultChequeMode} Cheque(s)`}
+                                </span>
+                              </div>
+                              <div className="font-semibold text-gray-200 line-clamp-1">{cu.customPlanTier}</div>
+                              <div className="text-[10px] text-gray-400">
+                                Fee/Split: <strong className="text-white">{cu.commissionSplitRatio}</strong>
+                              </div>
+                              <div className="grid grid-cols-3 gap-1 pt-1 border-t border-white/10 text-center">
+                                <div>
+                                  <div className="text-[9px] text-gray-400">Synced/Active</div>
+                                  <div className="font-extrabold text-[#D6B46C]">{cu.listingsSyncedCount}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[9px] text-gray-400">Offers/Deals</div>
+                                  <div className="font-extrabold text-white">
+                                    {cu.digitalOffersSubmittedOrReviewed + cu.workflowsSignedOffCount}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[9px] text-gray-400">Saved/Yr</div>
+                                  <div className="font-extrabold text-emerald-400">
+                                    {cu.estimatedCompetitorSpendSavedAed > 0
+                                      ? `${Math.round(cu.estimatedCompetitorSpendSavedAed / 1000)}k`
+                                      : 'AED 2.9k Fee'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          <p className="text-[11px] text-gray-600 leading-snug">
+                            <strong className="text-[#17191C]">Superpower:</strong> {meta.keySuperpower}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-1.5 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleDemoAccountLogin(u.email)}
+                            className={`w-full py-2.5 px-3 rounded-xl font-extrabold text-xs transition shadow flex items-center justify-center gap-1.5 ${
+                              isCurrentAccount
+                                ? 'bg-[#17625F] text-white'
+                                : 'swk-gold-gradient text-[#17191C] hover:opacity-95'
+                            }`}
+                          >
+                            <KeyRound size={13} />
+                            {isCurrentAccount
+                              ? 'Active — Re-Sync Custom Usage'
+                              : `1-Click Sign In as ${u.fullName.split(' ')[0]}`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAuthMode('signin')
+                              setLoginEmail(u.email)
+                              setLoginPassword('SwkRent2026!')
+                              showNotice('ok', `Loaded ${u.email} into Sign-In form.`)
+                            }}
+                            className="w-full py-1.5 px-3 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-[11px]"
+                          >
+                            Load Credentials into Sign-In Form
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+              </div>
+            </section>
+
+            {/* ============================================================
+                SECTION 2: PRODUCTION SIGN-IN / REGISTER PORTAL (LEFT) +
+                CONNECTED CUSTOM USAGE CONTROL STUDIO & TELEMETRY (RIGHT)
+               ============================================================ */}
+            <div className="grid lg:grid-cols-12 gap-6">
+              {/* LEFT PANE: PRODUCTION SIGN-IN & ROLE-TAILORED REGISTRATION */}
+              <div className="lg:col-span-6 bg-white rounded-2xl p-5 sm:p-6 border border-[#B89040]/60 shadow-md space-y-5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-bold uppercase text-[#9E7628]">
+                      UAE PASS · RERA ORN 51517 · DLD Title Deed Gate
+                    </span>
+                    <h3 className="text-xl font-extrabold text-[#17191C]">
+                      {authMode === 'signin'
+                        ? 'Production Sign-In Portal'
+                        : 'Verified Role Registration & Custom Usage Setup'}
+                    </h3>
+                  </div>
+                </div>
+
+                {/* Mode Switcher Tabs */}
+                <div className="grid grid-cols-2 gap-2 p-1.5 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9] text-xs font-extrabold">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('signin')}
+                    className={`py-2.5 rounded-lg transition ${
+                      authMode === 'signin'
+                        ? 'bg-[#17191C] text-[#D6B46C] shadow'
+                        : 'text-gray-600 hover:text-[#17191C]'
+                    }`}
+                  >
+                    Sign In (Email / UAE PASS / Demo)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('signup')}
+                    className={`py-2.5 rounded-lg transition ${
+                      authMode === 'signup'
+                        ? 'bg-[#17191C] text-[#D6B46C] shadow'
+                        : 'text-gray-600 hover:text-[#17191C]'
+                    }`}
+                  >
+                    Register New Verified Account
+                  </button>
+                </div>
+
+                {authMode === 'signin' ? (
+                  <div className="space-y-5 text-xs">
+                    {/* 1-Tap UAE PASS Digital Identity Quick Authentication */}
+                    <div className="p-4 rounded-2xl bg-[#F3FAF9] border border-[#17625F]/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-[#17625F] uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                          <ShieldCheck size={15} />
+                          1-Tap UAE PASS Biometric Digital Identity Sign-In
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-[#17625F] text-white font-bold text-[10px]">
+                          ICP / DLD Verified
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-600">
+                        Authenticate immediately with UAE PASS (Emirates ID + verified mobile) and auto-connect your
+                        role&apos;s Custom Usage rules without typing passwords:
+                      </p>
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleUaePassLogin('tenant@uaepass.ae')}
+                          className="p-2.5 rounded-xl bg-[#17625F] hover:bg-[#124e4b] text-white font-bold text-left transition flex items-center justify-between"
+                        >
+                          <div>
+                            <div className="text-xs font-extrabold">UAE PASS · Executive Tenant</div>
+                            <div className="text-[10px] text-emerald-200">Alexander Vance (EID Verified)</div>
+                          </div>
+                          <ArrowUpRight size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleUaePassLogin('landlord@swk.rent')}
+                          className="p-2.5 rounded-xl bg-[#17191C] hover:bg-black text-white font-bold text-left transition flex items-center justify-between"
+                        >
+                          <div>
+                            <div className="text-xs font-extrabold text-[#D6B46C]">UAE PASS · Owner360 Landlord</div>
+                            <div className="text-[10px] text-gray-300">Dr. Khalid (Title Deed Linked)</div>
+                          </div>
+                          <ArrowUpRight size={16} className="text-[#D6B46C]" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Standard Email & Password Form */}
+                    <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+                      <div>
+                        <label className="text-gray-700 block mb-1 font-bold">
+                          Registered Email Address (`@swk.rent`, `@uaepass.ae`, or Corporate Domain)
+                        </label>
+                        <input
+                          type="email"
+                          value={loginEmail}
+                          onChange={e => setLoginEmail(e.target.value)}
+                          placeholder="advisor@swk.rent"
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 font-semibold text-sm"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-gray-700 font-bold">Password</label>
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(v => !v)}
+                            className="text-[11px] text-[#9E7628] font-bold underline"
+                          >
+                            {showPassword ? 'Hide Password' : 'Show Password'}
+                          </button>
+                        </div>
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={loginPassword}
+                          onChange={e => setLoginPassword(e.target.value)}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 font-semibold text-sm"
+                          required
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full py-3.5 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold text-sm shadow-lg"
+                      >
+                        Sign In & Connect Custom Usage Profile
+                      </button>
+                    </form>
+
+                    {/* Quick 8-Account Pill Bar */}
+                    <div className="pt-3 border-t border-gray-200 space-y-2">
+                      <div className="font-bold text-gray-700">
+                        Quick Switch Any of the 8 Dedicated Demo Accounts (Password: <code>SwkRent2026!</code>):
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {(data?.demoUsers ?? []).map(u => (
+                          <button
+                            key={u.email}
+                            type="button"
+                            onClick={() => void handleDemoAccountLogin(u.email)}
+                            className="p-2 rounded-lg bg-[#FBF8F1] hover:bg-[#F4EFE3] border border-[#D6B46C]/60 text-left transition"
+                          >
+                            <div className="font-extrabold text-[#17191C] truncate">
+                              [{u.role}] {u.fullName}
+                            </div>
+                            <div className="text-[10px] text-gray-600 truncate">{u.email}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* REGISTRATION FORM WITH ROLE-SPECIFIC VERIFICATION & INITIAL CUSTOM USAGE */
+                  <form onSubmit={handleSignupSubmit} className="space-y-3.5 text-xs">
+                    <div>
+                      <label className="text-gray-700 block mb-1.5 font-bold">
+                        1. Choose Your UAE Rental Role (Auto-Configures Custom Usage Defaults)
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {(
+                          [
+                            {
+                              role: 'TENANT' as UserRole,
+                              title: 'TENANT',
+                              sub: '12x UAEDDS & RERA Shield',
+                              plan: 'UAE PASS Verified Tenant — 12x Monthly UAEDDS & RERA Shield',
+                              cheque: 12 as ChequeOption,
+                              fee: 2999,
+                              comm: 5,
+                              split: 'Flat AED 2,999 Direct Landlord / 5% Standard Agency',
+                            },
+                            {
+                              role: 'LANDLORD' as UserRole,
+                              title: 'LANDLORD',
+                              sub: 'AED 0 Fee · Owner360',
+                              plan: 'Owner360 Direct Landlord — Tier 1 (AED 0 Landlord Fee)',
+                              cheque: 1 as ChequeOption,
+                              fee: 2999,
+                              comm: 0,
+                              split: '0% Landlord Fee · Tenant Pays Flat AED 2,999',
+                            },
+                            {
+                              role: 'AGENT' as UserRole,
+                              title: 'RERA AGENT',
+                              sub: '50/50 Split · AED 0 XML',
+                              plan: 'RERA Broker Pro — AED 0 Portal Credits + 50/50 A2A Split',
+                              cheque: 2 as ChequeOption,
+                              fee: 0,
+                              comm: 5,
+                              split: '50% Partner Broker / 50% SWK Listing Pool',
+                            },
+                            {
+                              role: 'DEVELOPER' as UserRole,
+                              title: 'DEVELOPER',
+                              sub: 'BTR FIFO Queue Cap',
+                              plan: 'Institutional BTR Handover — FIFO Anti-Cannibalization',
+                              cheque: 4 as ChequeOption,
+                              fee: 0,
+                              comm: 2.5,
+                              split: 'Direct BTR Institutional Mandate (AED 0 Portal Fee)',
+                            },
+                            {
+                              role: 'ADMIN' as UserRole,
+                              title: 'SWK ADMIN',
+                              sub: 'ORN 51517 Compliance',
+                              plan: 'SWK Enterprise OS Master — Unlimited Mandates & Escrow',
+                              cheque: 1 as ChequeOption,
+                              fee: 2999,
+                              comm: 5,
+                              split: '100% SWK House / 50-50 A2A Protected Pool',
+                            },
+                          ] as const
+                        ).map(r => (
+                          <button
+                            key={r.role}
+                            type="button"
+                            onClick={() => {
+                              setSignupRole(r.role)
+                              setCuPlanTier(r.plan)
+                              setCuDefaultCheque(r.cheque)
+                              setCuFlatFee(r.fee)
+                              setCuCommPct(r.comm)
+                              setCuSplitRatio(r.split)
+                            }}
+                            className={`p-2.5 rounded-xl border text-left transition ${
+                              signupRole === r.role
+                                ? 'bg-[#17191C] text-white border-[#B89040] shadow'
+                                : 'bg-[#FBF8F1] text-[#17191C] border-[#E5DEC9] hover:border-[#B89040]'
+                            }`}
+                          >
+                            <div className="font-extrabold text-xs text-[#D6B46C]">{r.title}</div>
+                            <div className="text-[10px] opacity-85 mt-0.5">{r.sub}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-gray-700 block mb-1 font-bold">Full Legal Name *</label>
+                        <input
+                          value={signupFullName}
+                          onChange={e => setSignupFullName(e.target.value)}
+                          placeholder="e.g. Layla Al Qasimi"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-gray-700 block mb-1 font-bold">UAE Mobile / WhatsApp *</label>
+                        <input
+                          value={signupPhone}
+                          onChange={e => setSignupPhone(e.target.value)}
+                          placeholder="+971 50 123 4567"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-gray-700 block mb-1 font-bold">Email Address *</label>
+                        <input
+                          type="email"
+                          value={signupEmail}
+                          onChange={e => setSignupEmail(e.target.value)}
+                          placeholder="name@company.ae"
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-gray-700 block mb-1 font-bold">
+                          Password (min 8 chars + number) *
+                        </label>
+                        <input
+                          type="password"
+                          value={signupPassword}
+                          onChange={e => setSignupPassword(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    {/* Password Security Meter */}
+                    <div className="p-2.5 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9] flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-gray-600">
+                        Session Encryption & Password Compliance:
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                          signupPassword.length >= 8 && /[0-9]/.test(signupPassword)
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {signupPassword.length >= 8 && /[0-9]/.test(signupPassword)
+                          ? '✓ Strong (SHA-256 Salted +UAE PASS Ready)'
+                          : 'Requires 8+ chars & at least 1 number'}
+                      </span>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-gray-700 block mb-1 font-bold">
+                          Emirates ID or New Expat Passport No.
+                        </label>
+                        <input
+                          value={signupEmiratesId}
+                          onChange={e => setSignupEmiratesId(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-gray-700 block mb-1 font-bold">
+                          Employer / Agency / Family Office
+                        </label>
+                        <input
+                          value={signupCompany}
+                          onChange={e => setSignupCompany(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    {signupRole === 'AGENT' && (
+                      <div className="grid grid-cols-2 gap-2.5 p-3 rounded-xl bg-[#FBF8F1] border border-[#D6B46C]">
+                        <div>
+                          <label className="text-gray-700 block mb-1 font-bold">RERA Broker BRN *</label>
+                          <input
+                            value={signupReraBrn}
+                            onChange={e => setSignupReraBrn(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="text-gray-700 block mb-1 font-bold">Agency RERA ORN *</label>
+                          <input
+                            value={signupReraOrn}
+                            onChange={e => setSignupReraOrn(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold"
+                            required
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {signupRole === 'LANDLORD' && (
+                      <div className="p-3 rounded-xl bg-[#FBF8F1] border border-[#D6B46C]">
+                        <label className="text-gray-700 block mb-1 font-bold">
+                          DLD Title Deed / Abu Dhabi Mulkiya Reference *
+                        </label>
+                        <input
+                          value={signupTitleDeed}
+                          onChange={e => setSignupTitleDeed(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-gray-300 font-bold"
+                          required
+                        />
+                      </div>
+                    )}
+
+                    {/* Initial Custom Usage Preferences during Registration */}
+                    <div className="p-3.5 rounded-xl bg-[#17191C] text-white space-y-2.5">
+                      <div className="text-[11px] font-extrabold uppercase tracking-wider text-[#D6B46C]">
+                        2. Pre-Connect Your Custom Usage Rules at Registration
+                      </div>
+                      <div className="grid sm:grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-gray-300 block mb-1 text-[10px]">Default Payment Mode</label>
+                          <select
+                            value={cuDefaultCheque}
+                            onChange={e => setCuDefaultCheque(Number(e.target.value) as ChequeOption)}
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-[#22262B] border border-white/15 text-white font-bold"
+                          >
+                            <option value={1}>1 Cheque</option>
+                            <option value={2}>2 Cheques</option>
+                            <option value={4}>4 Cheques</option>
+                            <option value={12}>12x Monthly UAEDDS</option>
+                            <option value={30}>30-Day Expat Bridge</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-gray-300 block mb-1 text-[10px]">Preferred Emirate</label>
+                          <select
+                            value={cuPreferredEmirate}
+                            onChange={e =>
+                              setCuPreferredEmirate(e.target.value as 'All' | 'Dubai' | 'Abu Dhabi')
+                            }
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-[#22262B] border border-white/15 text-white font-bold"
+                          >
+                            <option value="All">All UAE</option>
+                            <option value="Dubai">Dubai (DLD/Ejari)</option>
+                            <option value="Abu Dhabi">Abu Dhabi (Tawtheeq)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-gray-300 block mb-1 text-[10px]">Max DIFC Commute (Mins)</label>
+                          <input
+                            type="number"
+                            value={cuMaxCommute}
+                            onChange={e => setCuMaxCommute(Number(e.target.value))}
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-[#22262B] border border-white/15 text-white font-bold"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3.5 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold text-sm shadow-lg"
+                    >
+                      Create Verified Account & Connect Custom Usage Profile
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {/* RIGHT PANE: CONNECTED CUSTOM USAGE STUDIO & LIVE TELEMETRY */}
+              <div className="lg:col-span-6 bg-white rounded-2xl p-5 sm:p-6 border border-[#17625F]/50 shadow-md space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-bold uppercase text-[#17625F]">
+                      Per-Account Custom Usage & Live Telemetry Engine
+                    </span>
+                    <h3 className="text-xl font-extrabold text-[#17191C]">
+                      Connected Custom Usage Studio ({currentUser?.fullName ?? `${effectiveRole} Demo`})
+                    </h3>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-extrabold text-[11px]">
+                    Synced with Marketplace & Calculator
+                  </span>
+                </div>
+
+                {/* Live Telemetry Counters Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="p-3 rounded-xl bg-[#17191C] text-white border border-[#B89040]/40">
+                    <div className="text-[10px] text-gray-400">Listings / Mandates Synced</div>
+                    <div className="text-xl font-extrabold text-[#D6B46C] mt-0.5">
+                      {currentUser?.customUsage?.listingsSyncedCount ?? 18}
+                    </div>
+                    <div className="text-[10px] text-emerald-400">AED 0 Portal Credit Burn</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#F3FAF9] border border-[#17625F]/30">
+                    <div className="text-[10px] text-gray-500">Saved vs Legacy Portals</div>
+                    <div className="text-lg font-extrabold text-[#17625F] mt-0.5">
+                      {aed(currentUser?.customUsage?.estimatedCompetitorSpendSavedAed ?? 84000)}
+                    </div>
+                    <div className="text-[10px] text-gray-600">Annual Subscription Saved</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9]">
+                    <div className="text-[10px] text-gray-500">Viewings & Offers</div>
+                    <div className="text-xl font-extrabold text-[#17191C] mt-0.5">
+                      {(currentUser?.customUsage?.viewingsBookedOrDispatched ?? 4) +
+                        (currentUser?.customUsage?.digitalOffersSubmittedOrReviewed ?? 2)}
+                    </div>
+                    <div className="text-[10px] text-gray-600">
+                      {currentUser?.customUsage?.workflowsSignedOffCount ?? 2} Workflow Sign-Offs
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#FBF8F1] border border-[#E5DEC9]">
+                    <div className="text-[10px] text-gray-500">WhatsApp Pitches & API</div>
+                    <div className="text-xl font-extrabold text-[#9E7628] mt-0.5">
+                      {(currentUser?.customUsage?.whatsappPitchesGenerated ?? 6) +
+                        (currentUser?.customUsage?.apiWebhookEventsCount ?? 5)}
+                    </div>
+                    <div className="text-[10px] text-gray-600">BRN-Locked & Webhook Synced</div>
+                  </div>
+                </div>
+
+                {/* Interactive Custom Usage Configuration Form */}
+                <form onSubmit={handleSaveCustomUsage} className="space-y-3 text-xs">
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Custom Usage Plan / Mandate Tier</label>
+                      <input
+                        value={cuPlanTier}
+                        onChange={e => setCuPlanTier(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Commission / Fee Split Rule</label>
+                      <input
+                        value={cuSplitRatio}
+                        onChange={e => setCuSplitRatio(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Default Cheque Split</label>
+                      <select
+                        value={cuDefaultCheque}
+                        onChange={e => setCuDefaultCheque(Number(e.target.value) as ChequeOption)}
+                        className="w-full px-2.5 py-2 rounded-lg border border-gray-300 font-bold bg-[#FBF8F1]"
+                      >
+                        <option value={1}>1 Cheque</option>
+                        <option value={2}>2 Cheques</option>
+                        <option value={4}>4 Cheques</option>
+                        <option value={12}>12x UAEDDS</option>
+                        <option value={30}>30d Expat Bridge</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Preferred Emirate</label>
+                      <select
+                        value={cuPreferredEmirate}
+                        onChange={e =>
+                          setCuPreferredEmirate(e.target.value as 'All' | 'Dubai' | 'Abu Dhabi')
+                        }
+                        className="w-full px-2.5 py-2 rounded-lg border border-gray-300 font-bold bg-[#FBF8F1]"
+                      >
+                        <option value="All">All UAE</option>
+                        <option value="Dubai">Dubai</option>
+                        <option value="Abu Dhabi">Abu Dhabi</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Direct Flat Fee (AED)</label>
+                      <input
+                        type="number"
+                        value={cuFlatFee}
+                        onChange={e => setCuFlatFee(Number(e.target.value))}
+                        className="w-full px-2.5 py-2 rounded-lg border border-gray-300 font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Agency Comm (%)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={cuCommPct}
+                        onChange={e => setCuCommPct(Number(e.target.value))}
+                        className="w-full px-2.5 py-2 rounded-lg border border-gray-300 font-bold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Max DIFC Commute (Mins)</label>
+                      <input
+                        type="number"
+                        value={cuMaxCommute}
+                        onChange={e => setCuMaxCommute(Number(e.target.value))}
+                        className="w-full px-2.5 py-2 rounded-lg border border-gray-300 font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">BTR FIFO Queue Cap</label>
+                      <input
+                        type="number"
+                        value={cuBtrQueueCap}
+                        onChange={e => setCuBtrQueueCap(Number(e.target.value))}
+                        className="w-full px-2.5 py-2 rounded-lg border border-gray-300 font-bold"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <label className="flex items-center gap-2 p-2 rounded-lg bg-[#FBF8F1] border border-[#E5DEC9] w-full cursor-pointer font-bold">
+                        <input
+                          type="checkbox"
+                          checked={cuChillerFree}
+                          onChange={e => setCuChillerFree(e.target.checked)}
+                        />
+                        <span>Chiller-Free Only</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">
+                        Personal REST API Key (Connected to External OS)
+                      </label>
+                      <input
+                        readOnly
+                        value={currentUser?.customUsage?.personalApiKey ?? 'swk_live_orn51517_verified'}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-gray-100 font-mono text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-700 block mb-1 font-bold">Custom Webhook Endpoint URL</label>
+                      <input
+                        value={cuWebhookUrl}
+                        onChange={e => setCuWebhookUrl(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-gray-300 font-mono text-[11px]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-gray-700 block mb-1 font-bold">
+                      Custom WhatsApp Client Pitch Signature (Auto-Appended on Every Share)
+                    </label>
+                    <input
+                      value={cuWhatsappSig}
+                      onChange={e => setCuWhatsappSig(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-300 font-semibold"
+                    />
+                  </div>
+
+                  {/* Automation Guard Toggles */}
+                  <div className="grid sm:grid-cols-3 gap-2 pt-1">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-[#FBF8F1] border border-[#E5DEC9] font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cuEjariAutopilot}
+                        onChange={e => setCuEjariAutopilot(e.target.checked)}
+                      />
+                      <span>Ejari Autopilot</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-[#FBF8F1] border border-[#E5DEC9] font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cuRera90DayShield}
+                        onChange={e => setCuRera90DayShield(e.target.checked)}
+                      />
+                      <span>90-Day RERA Shield</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-[#FBF8F1] border border-[#E5DEC9] font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cuPdcBounceShield}
+                        onChange={e => setCuPdcBounceShield(e.target.checked)}
+                      />
+                      <span>PDC Bounce Shield</span>
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-3 rounded-xl bg-[#17191C] text-[#D6B46C] font-extrabold text-sm shadow hover:bg-black transition"
+                  >
+                    Save & Apply Custom Usage to Marketplace, Calculator & API
+                  </button>
+                </form>
+
+                {/* Live Telemetry Event Simulator Buttons */}
+                <div className="pt-3 border-t border-gray-200 space-y-2 text-xs">
+                  <div className="font-bold text-gray-700">
+                    Test Live Custom Usage Telemetry Persistence (Increments SQLite Counters):
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleTrackUsageEvent('listingsSyncedCount', 'Listing Synced at AED 0')}
+                      className="py-2 px-2.5 rounded-lg bg-[#FBF8F1] hover:bg-[#F4EFE3] border border-[#D6B46C] font-bold text-[11px]"
+                    >
+                      +1 Sync Listing (AED 0)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleTrackUsageEvent('whatsappPitchesGenerated', 'WhatsApp Client Pitch Deck')
+                      }
+                      className="py-2 px-2.5 rounded-lg bg-[#FBF8F1] hover:bg-[#F4EFE3] border border-[#D6B46C] font-bold text-[11px]"
+                    >
+                      +1 WhatsApp Pitch
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleTrackUsageEvent('apiWebhookEventsCount', 'External OS Webhook Event')}
+                      className="py-2 px-2.5 rounded-lg bg-[#FBF8F1] hover:bg-[#F4EFE3] border border-[#D6B46C] font-bold text-[11px]"
+                    >
+                      +1 OS API Webhook
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ============================================================
+                SECTION 3: WHY SWK.RENT OUTPERFORMS EVERY UAE COMPETITOR
+               ============================================================ */}
+            <section className="bg-white rounded-2xl p-5 sm:p-6 border border-[#E5DEC9] shadow-sm space-y-4">
+              <div>
+                <span className="text-xs font-bold uppercase text-[#9E7628]">
+                  Head-to-Head UAE PropTech Benchmark
+                </span>
+                <h3 className="text-lg sm:text-xl font-extrabold text-[#17191C]">
+                  Why SWK RENT (`swk.rent`) Is Higher Than Any Other Competitor for All 5 Roles
+                </h3>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#17191C] text-[#D6B46C]">
+                      <th className="p-3 rounded-tl-xl">Capability / Role Dimension</th>
+                      <th className="p-3">SWK RENT (`https://swk.rent`)</th>
+                      <th className="p-3 rounded-tr-xl">Legacy UAE Portals & Competitors</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    <tr>
+                      <td className="p-3 font-bold">1. Broker & Developer Listing Cost</td>
+                      <td className="p-3 font-bold text-[#17625F]">
+                        AED 0 Unlimited Verified XML Sync (Pay only on closed deal split)
+                      </td>
+                      <td className="p-3 text-gray-600">AED 95,000 – AED 240,000/yr mandatory portal credit packages</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-bold">2. Dedicated Demo Accounts & Custom Usage</td>
+                      <td className="p-3 font-bold text-[#17625F]">
+                        8 Dedicated Accounts across all 5 roles + per-account SQLite Custom Usage Studio
+                      </td>
+                      <td className="p-3 text-gray-600">No multi-role sandbox or custom commission/cheque rule engine</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-bold">3. Duplicate Listing Elimination</td>
+                      <td className="p-3 font-bold text-[#17625F]">
+                        100% Deduplicated by DLD Title Deed + Trakheesi + Makani No.
+                      </td>
+                      <td className="p-3 text-gray-600">8–15 duplicate ads per apartment with bait-and-switch pricing</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-bold">4. True Monthly All-In Cost Transparency</td>
+                      <td className="p-3 font-bold text-[#17625F]">
+                        Includes Chiller (Empower/Tabreed), DEWA base, 5% Muni Fee, Deposit, VAT & Ejari
+                      </td>
+                      <td className="p-3 text-gray-600">Shows only headline annual rent; hides AED 15k–25k upfront shock</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-bold">5. Developer Bulk Handover BTR Protection</td>
+                      <td className="p-3 font-bold text-[#17625F]">
+                        FIFO Anti-Cannibalization Queue (Max 3 public units/layout) + RERA Floor Guard
+                      </td>
+                      <td className="p-3 text-gray-600">200 identical handover units dumped at once, crashing tower yields</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-bold">6. Landlord Direct & Instant Rent Payout</td>
+                      <td className="p-3 font-bold text-[#17625F]">
+                        Tier 1 Direct (AED 0 Landlord Fee / Flat AED 2,999 Tenant) + Tier 3 1-Cheque Day-1 Payout
+                      </td>
+                      <td className="p-3 text-gray-600">Rigid 5% commission + manual paper PDC cheque chasing</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        )}
       </main>
 
       {/* ============================================================
-          MODAL: SIGN IN, SIGN UP & 5-ROLE RBAC ONBOARDING
+          MODAL: SIGN IN, SIGN UP & 8 DEDICATED DEMO ACCOUNTS
          ============================================================ */}
       {authModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
@@ -3090,7 +4451,7 @@ export default function App() {
                     SWK RENT · First 1,000 Users MVP Access
                   </span>
                   <h3 className="text-lg font-extrabold text-[#17191C]">
-                    {authMode === 'signin' ? 'Sign In to SWK RENT OS' : 'Create Verified MVP Account'}
+                    {authMode === 'signin' ? 'Sign In to SWK RENT' : 'Create Verified MVP Account'}
                   </h3>
                 </div>
               </div>
@@ -3153,26 +4514,26 @@ export default function App() {
 
                 <div className="pt-3 border-t border-gray-200 space-y-2">
                   <div className="font-bold text-gray-600">
-                    1-Tap Instant Demo Persona Sign-In (Password: <code>SwkRent2026!</code>):
+                    1-Tap Instant Dedicated Demo Account Sign-In (Password: <code>SwkRent2026!</code>):
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                     {(
                       [
-                        { role: 'TENANT', email: 'tenant@uaepass.ae', label: 'Tenant (Alexander Vance)' },
-                        { role: 'LANDLORD', email: 'landlord@swk.rent', label: 'Landlord (Dr. Khalid)' },
-                        { role: 'AGENT', email: 'advisor@swk.rent', label: 'SWK Advisor (M. Haseeb)' },
-                        { role: 'DEVELOPER', email: 'developer@selectgroup.ae', label: 'Developer (Select Group)' },
-                        { role: 'ADMIN', email: 'admin@swk.rent', label: 'SWK Admin (ORN 51517)' },
+                        { email: 'tenant@uaepass.ae', label: 'Tenant · Executive (A. Vance)' },
+                        { email: 'expat@swk.rent', label: 'Tenant · New Expat 30d Bridge' },
+                        { email: 'landlord@swk.rent', label: 'Landlord · Direct Tier 1 (Dr. Khalid)' },
+                        { email: 'familyoffice@swk.rent', label: 'Landlord · Family Office 1-Cheque' },
+                        { email: 'advisor@swk.rent', label: 'Agent · SWK Advisor (M. Haseeb)' },
+                        { email: 'partner@apexcrest.ae', label: 'Agent · A2A Partner Broker' },
+                        { email: 'developer@selectgroup.ae', label: 'Developer · Select Group BTR' },
+                        { email: 'admin@swk.rent', label: 'SWK Admin · ORN 51517 Master' },
                       ] as const
                     ).map(item => (
                       <button
-                        key={item.role}
+                        key={item.email}
                         type="button"
                         onClick={() => {
-                          setLoginEmail(item.email)
-                          setLoginPassword('SwkRent2026!')
-                          void handleQuickRoleSwitch(item.role)
-                          setAuthModalOpen(false)
+                          void handleDemoAccountLogin(item.email)
                         }}
                         className="p-2 rounded-lg bg-[#FBF8F1] hover:bg-[#F4EFE3] border border-[#D6B46C]/50 text-left font-semibold"
                       >

@@ -8,6 +8,8 @@ import {
   type VerifiedTenantBrief,
   type AuthUser,
   type UserRole,
+  type ChequeOption,
+  type UserCustomUsageProfile,
   type RentalDealWorkflow,
   evaluateReraRenewal,
   classifyMaintenanceResponsibility,
@@ -355,6 +357,33 @@ export function initSchemaAndSeed() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS user_custom_usage (
+      user_id INTEGER PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      persona_code TEXT NOT NULL,
+      persona_badge TEXT NOT NULL,
+      custom_plan_name TEXT NOT NULL,
+      default_cheque_mode INTEGER NOT NULL DEFAULT 12,
+      preferred_emirate TEXT NOT NULL DEFAULT 'All',
+      chiller_free_preferred INTEGER NOT NULL DEFAULT 1,
+      max_commute_difc_mins INTEGER NOT NULL DEFAULT 45,
+      custom_commission_pct REAL NOT NULL DEFAULT 5.0,
+      custom_flat_fee_aed INTEGER NOT NULL DEFAULT 2999,
+      fifo_queue_cap_units INTEGER NOT NULL DEFAULT 3,
+      personal_api_key_masked TEXT NOT NULL,
+      custom_webhook_url TEXT NOT NULL,
+      whatsapp_pitch_signature TEXT NOT NULL,
+      listings_synced_count INTEGER NOT NULL DEFAULT 0,
+      portal_credit_burn_aed INTEGER NOT NULL DEFAULT 0,
+      estimated_competitor_spend_saved_aed INTEGER NOT NULL DEFAULT 0,
+      viewings_booked_or_dispatched INTEGER NOT NULL DEFAULT 0,
+      digital_offers_submitted_or_reviewed INTEGER NOT NULL DEFAULT 0,
+      workflows_signed_off_count INTEGER NOT NULL DEFAULT 0,
+      whatsapp_pitches_generated INTEGER NOT NULL DEFAULT 0,
+      api_webhook_events_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON auth_sessions(user_id);
@@ -380,7 +409,7 @@ export function initSchemaAndSeed() {
     `).run(`${defaultOsApiUrl}/api/public/properties`, `${defaultOsApiUrl}/api/webhooks/swk-rent`)
   }
 
-  // Seed 6 pre-verified accounts across all 5 UAE Rental Roles if empty
+  // Seed 8 dedicated demo accounts across all 5 UAE Rental Roles & specialized personas if empty
   const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c
   if (userCount === 0) {
     const defaultPwHash = hashPassword('SwkRent2026!')
@@ -390,89 +419,315 @@ export function initSchemaAndSeed() {
         emirates_id_or_passport, rera_brn, rera_orn, agency_or_company_name, title_deed_ref, created_at
       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
     `)
+    const insertUsage = db.prepare(`
+      INSERT INTO user_custom_usage (
+        user_id, user_email, persona_code, persona_badge, custom_plan_name,
+        default_cheque_mode, preferred_emirate, chiller_free_preferred, max_commute_difc_mins,
+        custom_commission_pct, custom_flat_fee_aed, fifo_queue_cap_units,
+        personal_api_key_masked, custom_webhook_url, whatsapp_pitch_signature,
+        listings_synced_count, portal_credit_burn_aed, estimated_competitor_spend_saved_aed,
+        viewings_booked_or_dispatched, digital_offers_submitted_or_reviewed,
+        workflows_signed_off_count, whatsapp_pitches_generated, api_webhook_events_count, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+    `)
     const now = '2026-11-04T04:00:00Z'
-    insertUser.run(
-      'admin@swk.rent',
-      defaultPwHash,
-      'Shahid · SWK Managing Director',
-      '+971 50 515 1700',
-      'ADMIN',
-      '784-1990-5151700-1',
-      'BRN-51517',
-      'ORN-51517',
-      'SWK Properties L.L.C.',
-      null,
-      now,
-    )
-    insertUser.run(
-      'advisor@swk.rent',
-      defaultPwHash,
-      'Mohammad Haseeb · Senior RERA Advisor',
-      '+971 50 589 1200',
-      'AGENT',
-      '784-1993-5891200-2',
-      'BRN-58912',
-      'ORN-51517',
-      'SWK Properties L.L.C.',
-      null,
-      now,
-    )
-    insertUser.run(
-      'partner@apexcrest.ae',
-      defaultPwHash,
-      'Omar Farooq · A2A Partner Broker',
-      '+971 52 491 8200',
-      'AGENT',
-      '784-1991-4918200-4',
-      'BRN-49182',
-      'ORN-31940',
-      'Apex Crest Real Estate LLC',
-      null,
-      now,
-    )
-    insertUser.run(
-      'landlord@swk.rent',
-      defaultPwHash,
-      'Dr. Khalid Al Mansoori · Owner360 Landlord',
-      '+971 50 884 1200',
-      'LANDLORD',
-      '784-1982-8841200-9',
-      null,
-      null,
-      'Al Mansoori Family Portfolio',
-      'TD-DXB-2023-19402',
-      now,
-    )
-    insertUser.run(
-      'developer@selectgroup.ae',
-      defaultPwHash,
-      'Rami Al Ghaith · Director of BTR Handover',
-      '+971 56 300 9900',
-      'DEVELOPER',
-      '784-1985-3009900-7',
-      null,
-      'DLD-DEV-104',
-      'Select Group BTR Division',
-      'PROJ-PENINSULA-4',
-      now,
-    )
-    insertUser.run(
-      'tenant@uaepass.ae',
-      defaultPwHash,
-      'Alexander Vance · Verified Tenant',
-      '+971 58 210 4490',
-      'TENANT',
-      '784-1994-2104490-5',
-      null,
-      null,
-      'Emirates Group Executive Housing',
-      null,
-      now,
-    )
+
+    const demoAccountsSeed = [
+      {
+        email: 'admin@swk.rent',
+        fullName: 'Shahid · SWK Managing Director',
+        phone: '+971 50 515 1700',
+        role: 'ADMIN' as UserRole,
+        eid: '784-1990-5151700-1',
+        brn: 'BRN-51517',
+        orn: 'ORN-51517',
+        company: 'SWK Properties L.L.C.',
+        deed: null,
+        personaCode: 'SWK_ADMIN',
+        personaBadge: 'SWK Super-Admin · ORN 51517 & Escrow Guard',
+        planName: 'Full 1,000-User MVP Cohort Governance + External OS REST API Bridge',
+        chequeMode: 12,
+        emirate: 'All',
+        chillerFree: 1,
+        maxCommute: 90,
+        commPct: 5.0,
+        flatFee: 2999,
+        fifoCap: 3,
+        apiKey: 'swk_adm_live_****_51517',
+        webhook: 'https://swk.rent/api/os-api/webhook',
+        signature: 'Shahid · Managing Director | SWK Properties L.L.C. (RERA ORN 51517)',
+        listings: 48,
+        savedAed: 163200,
+        viewings: 19,
+        offers: 14,
+        workflows: 12,
+        pitches: 28,
+        webhooks: 64,
+      },
+      {
+        email: 'advisor@swk.rent',
+        fullName: 'Mohammad Haseeb · Senior RERA Advisor',
+        phone: '+971 50 589 1200',
+        role: 'AGENT' as UserRole,
+        eid: '784-1993-5891200-2',
+        brn: 'BRN-58912',
+        orn: 'ORN-51517',
+        company: 'SWK Properties L.L.C.',
+        deed: null,
+        personaCode: 'SWK_ADVISOR',
+        personaBadge: 'SWK Exclusive RERA Advisor · 50/50 Split + Key Vault',
+        planName: 'SWK Exclusive 50/50 Commission Split + Instant Key Vault + Ejari Sign-Off',
+        chequeMode: 2,
+        emirate: 'Dubai',
+        chillerFree: 1,
+        maxCommute: 35,
+        commPct: 5.0,
+        flatFee: 0,
+        fifoCap: 3,
+        apiKey: 'swk_agt_live_****_58912',
+        webhook: 'https://api.os.swk.rent/v1/advisor/haseeb/events',
+        signature: 'Mohammad Haseeb · Senior RERA Advisor (BRN-58912) | SWK Rent',
+        listings: 24,
+        savedAed: 96000,
+        viewings: 31,
+        offers: 11,
+        workflows: 9,
+        pitches: 42,
+        webhooks: 27,
+      },
+      {
+        email: 'partner@apexcrest.ae',
+        fullName: 'Omar Farooq · A2A Partner Broker',
+        phone: '+971 52 491 8200',
+        role: 'AGENT' as UserRole,
+        eid: '784-1991-4918200-4',
+        brn: 'BRN-49182',
+        orn: 'ORN-31940',
+        company: 'Apex Crest Real Estate LLC',
+        deed: null,
+        personaCode: 'A2A_BROKER',
+        personaBadge: 'External A2A Partner Broker · 50% Protected Split',
+        planName: 'Protected 50% Partner / 25% SWK / 25% Advisor A2A Split + AED 0 XML Sync',
+        chequeMode: 1,
+        emirate: 'Dubai',
+        chillerFree: 1,
+        maxCommute: 40,
+        commPct: 2.5,
+        flatFee: 0,
+        fifoCap: 3,
+        apiKey: 'swk_a2a_live_****_31940',
+        webhook: 'https://crm.apexcrest.ae/webhooks/swk-rent',
+        signature: 'Omar Farooq (BRN-49182) · Apex Crest Real Estate (ORN-31940) via swk.rent A2A Shield',
+        listings: 32,
+        savedAed: 115200,
+        viewings: 14,
+        offers: 6,
+        workflows: 5,
+        pitches: 35,
+        webhooks: 19,
+      },
+      {
+        email: 'landlord@swk.rent',
+        fullName: 'Dr. Khalid Al Mansoori · Owner360 Landlord',
+        phone: '+971 50 884 1200',
+        role: 'LANDLORD' as UserRole,
+        eid: '784-1982-8841200-9',
+        brn: null,
+        orn: null,
+        company: 'Al Mansoori Family Portfolio',
+        deed: 'TD-DXB-2023-19402',
+        personaCode: 'DIRECT_LANDLORD',
+        personaBadge: 'Direct Self-Serve Landlord · AED 0 Owner Fee',
+        planName: 'Tier 1: Direct Self-Serve (AED 0 Landlord Fee · Tenant Pays Flat AED 2,999)',
+        chequeMode: 1,
+        emirate: 'Dubai',
+        chillerFree: 1,
+        maxCommute: 45,
+        commPct: 0,
+        flatFee: 2999,
+        fifoCap: 1,
+        apiKey: 'swk_own_live_****_19402',
+        webhook: 'https://swk.rent/api/owner360/almansoori',
+        signature: 'Dr. Khalid Al Mansoori · Verified DLD Title Deed Owner (TD-DXB-2023-19402)',
+        listings: 3,
+        savedAed: 18500,
+        viewings: 8,
+        offers: 5,
+        workflows: 4,
+        pitches: 6,
+        webhooks: 11,
+      },
+      {
+        email: 'familyoffice@swk.rent',
+        fullName: 'H.E. Tariq Al Maktoum · Portfolio Landlord',
+        phone: '+971 50 700 8800',
+        role: 'LANDLORD' as UserRole,
+        eid: '784-1978-7008800-3',
+        brn: null,
+        orn: null,
+        company: 'H.E. Tariq Al Maktoum Family Office',
+        deed: 'TD-DXB-2021-88412',
+        personaCode: 'PORTFOLIO_LANDLORD',
+        personaBadge: 'Institutional Portfolio · 1-Cheque Day-1 Guarantee',
+        planName: 'Tier 3: SWK 1-Cheque Upfront Guarantee (8% · Paid Day 1 while Tenant pays 12x)',
+        chequeMode: 1,
+        emirate: 'All',
+        chillerFree: 1,
+        maxCommute: 60,
+        commPct: 8.0,
+        flatFee: 0,
+        fifoCap: 3,
+        apiKey: 'swk_fmo_live_****_88412',
+        webhook: 'https://treasury.almaktoum-fo.ae/webhooks/swk-rent',
+        signature: 'H.E. Tariq Al Maktoum Family Office · Institutional Rental Portfolio',
+        listings: 14,
+        savedAed: 64000,
+        viewings: 22,
+        offers: 9,
+        workflows: 7,
+        pitches: 12,
+        webhooks: 24,
+      },
+      {
+        email: 'developer@selectgroup.ae',
+        fullName: 'Rami Al Ghaith · Director of BTR Handover',
+        phone: '+971 56 300 9900',
+        role: 'DEVELOPER' as UserRole,
+        eid: '784-1985-3009900-7',
+        brn: null,
+        orn: 'DLD-DEV-104',
+        company: 'Select Group BTR Division',
+        deed: 'PROJ-PENINSULA-4',
+        personaCode: 'BTR_DEVELOPER',
+        personaBadge: 'Developer BTR Pool · FIFO Anti-Cannibalization',
+        planName: 'Bulk Tower Handover FIFO Queue (Max 3 Units Public per Layout · 16.5% Yield Protection)',
+        chequeMode: 1,
+        emirate: 'Dubai',
+        chillerFree: 1,
+        maxCommute: 30,
+        commPct: 5.0,
+        flatFee: 0,
+        fifoCap: 3,
+        apiKey: 'swk_dev_live_****_0104',
+        webhook: 'https://btr.select-group.ae/api/webhooks/swk-rent',
+        signature: 'Rami Al Ghaith · Select Group BTR Lease-Up Desk (DLD-DEV-104)',
+        listings: 180,
+        savedAed: 342000,
+        viewings: 64,
+        offers: 38,
+        workflows: 29,
+        pitches: 45,
+        webhooks: 88,
+      },
+      {
+        email: 'tenant@uaepass.ae',
+        fullName: 'Alexander Vance · Verified Executive Tenant',
+        phone: '+971 58 210 4490',
+        role: 'TENANT' as UserRole,
+        eid: '784-1994-2104490-5',
+        brn: null,
+        orn: null,
+        company: 'Emirates Group Executive Housing',
+        deed: null,
+        personaCode: 'EXEC_TENANT',
+        personaBadge: 'Corporate Executive Tenant · 12x Monthly UAEDDS',
+        planName: '12x Monthly UAEDDS Direct Debit + 90-Day RERA Decree 43 Renewal Shield',
+        chequeMode: 12,
+        emirate: 'Dubai',
+        chillerFree: 1,
+        maxCommute: 25,
+        commPct: 5.0,
+        flatFee: 2999,
+        fifoCap: 3,
+        apiKey: 'swk_tnt_live_****_4490',
+        webhook: 'https://swk.rent/api/tenant-alerts/alexander-vance',
+        signature: 'Alexander Vance · UAE PASS Verified Tenant (Emirates Group)',
+        listings: 0,
+        savedAed: 6251,
+        viewings: 4,
+        offers: 2,
+        workflows: 2,
+        pitches: 3,
+        webhooks: 7,
+      },
+      {
+        email: 'expat@swk.rent',
+        fullName: 'Charlotte Laurent · New Expat Relocation Tenant',
+        phone: '+971 52 904 1180',
+        role: 'TENANT' as UserRole,
+        eid: 'PASSPORT-FR-9920148 (EID In Process)',
+        brn: null,
+        orn: null,
+        company: 'TotalEnergies EP UAE Relocation',
+        deed: null,
+        personaCode: 'EXPAT_BRIDGE_TENANT',
+        personaBadge: 'New Expat · 30-Day Bridge-to-Ejari Pass',
+        planName: '30-Day New Expat Bridge Pass (Move In Before Emirates ID · Auto-Converts to 12m Ejari)',
+        chequeMode: 30,
+        emirate: 'Dubai',
+        chillerFree: 1,
+        maxCommute: 30,
+        commPct: 5.0,
+        flatFee: 2999,
+        fifoCap: 3,
+        apiKey: 'swk_exp_live_****_1180',
+        webhook: 'https://swk.rent/api/tenant-alerts/charlotte-laurent',
+        signature: 'Charlotte Laurent · TotalEnergies Relocation (30-Day Bridge Verified)',
+        listings: 0,
+        savedAed: 14800,
+        viewings: 3,
+        offers: 1,
+        workflows: 1,
+        pitches: 2,
+        webhooks: 5,
+      },
+    ]
+
+    for (const acc of demoAccountsSeed) {
+      const info = insertUser.run(
+        acc.email,
+        defaultPwHash,
+        acc.fullName,
+        acc.phone,
+        acc.role,
+        acc.eid,
+        acc.brn,
+        acc.orn,
+        acc.company,
+        acc.deed,
+        now,
+      )
+      const uid = Number(info.lastInsertRowid)
+      insertUsage.run(
+        uid,
+        acc.email,
+        acc.personaCode,
+        acc.personaBadge,
+        acc.planName,
+        acc.chequeMode,
+        acc.emirate,
+        acc.chillerFree,
+        acc.maxCommute,
+        acc.commPct,
+        acc.flatFee,
+        acc.fifoCap,
+        acc.apiKey,
+        acc.webhook,
+        acc.signature,
+        acc.listings,
+        acc.savedAed,
+        acc.viewings,
+        acc.offers,
+        acc.workflows,
+        acc.pitches,
+        acc.webhooks,
+        now,
+      )
+    }
 
     db.prepare(`
       INSERT INTO audit_logs (user_id, user_email, user_role, action, entity_type, entity_ref, details, created_at)
-      VALUES (1, 'admin@swk.rent', 'ADMIN', 'MVP_COHORT_INITIALIZED', 'SYSTEM', 'MVP-1000', 'swk.rent 1,000-User MVP Cohort & 5-Role RBAC Guard initialized (RERA ORN 51517)', ?)
+      VALUES (1, 'admin@swk.rent', 'ADMIN', 'MVP_COHORT_INITIALIZED', 'SYSTEM', 'MVP-1000', 'swk.rent 1,000-User MVP Cohort & 8 Dedicated Demo Personas initialized (RERA ORN 51517)', ?)
     `).run(now)
   }
 
@@ -1572,6 +1827,250 @@ export function listTenantReverseBriefs(): VerifiedTenantBrief[] {
   }))
 }
 
+export function mapCustomUsageRow(row: any): UserCustomUsageProfile {
+  const listingsSyncedCount = Number(row.listings_synced_count) || 0
+  const portalCreditBurnAed = Number(row.portal_credit_burn_aed) || 0
+  const estimatedCompetitorSpendSavedAed = Number(row.estimated_competitor_spend_saved_aed) || 0
+  const viewingsBookedOrDispatched = Number(row.viewings_booked_or_dispatched) || 0
+  const digitalOffersSubmittedOrReviewed = Number(row.digital_offers_submitted_or_reviewed) || 0
+  const workflowsSignedOffCount = Number(row.workflows_signed_off_count) || 0
+  const whatsappPitchesGenerated = Number(row.whatsapp_pitches_generated) || 0
+  const apiWebhookEventsCount = Number(row.api_webhook_events_count) || 0
+  const fifoQueueCapUnits = Number(row.fifo_queue_cap_units) || 3
+
+  return {
+    userId: row.user_id,
+    userEmail: row.user_email,
+    personaCode: row.persona_code,
+    personaBadge: row.persona_badge,
+    customPlanName: row.custom_plan_name,
+    customPlanTier: row.custom_plan_name,
+    commissionSplitRatio: row.persona_badge,
+    defaultChequeMode: (Number(row.default_cheque_mode) || 12) as ChequeOption,
+    preferredEmirate: (row.preferred_emirate || 'All') as 'All' | 'Dubai' | 'Abu Dhabi',
+    chillerFreePreferred: Boolean(row.chiller_free_preferred),
+    maxCommuteDifcMins: Number(row.max_commute_difc_mins) || 45,
+    customCommissionPct: Number(row.custom_commission_pct ?? 5.0),
+    customFlatFeeAed: Number(row.custom_flat_fee_aed ?? 2999),
+    fifoQueueCapUnits,
+    btrFifoQueueCap: fifoQueueCapUnits,
+    personalApiKeyMasked: row.personal_api_key_masked,
+    personalApiKey: row.personal_api_key_masked,
+    customWebhookUrl: row.custom_webhook_url,
+    whatsappPitchSignature: row.whatsapp_pitch_signature,
+    ejariAutopilotEnabled: true,
+    rera90DayShieldEnabled: true,
+    pdcBounceShieldEnabled: true,
+    listingsSyncedCount,
+    portalCreditBurnAed,
+    estimatedCompetitorSpendSavedAed,
+    viewingsBookedOrDispatched,
+    digitalOffersSubmittedOrReviewed,
+    workflowsSignedOffCount,
+    whatsappPitchesGenerated,
+    apiWebhookEventsCount,
+    usageMetrics: {
+      listingsSyncedCount,
+      portalCreditBurnAed,
+      estimatedCompetitorSpendSavedAed,
+      viewingsBookedOrDispatched,
+      digitalOffersSubmittedOrReviewed,
+      workflowsSignedOffCount,
+      whatsappPitchesGenerated,
+      apiWebhookEventsCount,
+    },
+    updatedAt: row.updated_at,
+  }
+}
+
+export function getUserCustomUsage(userId: number, fallbackUserRow?: any): UserCustomUsageProfile {
+  const existing = db.prepare('SELECT * FROM user_custom_usage WHERE user_id = ?').get(userId) as any
+  if (existing) return mapCustomUsageRow(existing)
+
+  const uRow = fallbackUserRow || (db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any)
+  const role: UserRole = (uRow?.role as UserRole) || 'TENANT'
+  const email = uRow?.email || `user.${userId}@swk.rent`
+  const fullName = uRow?.full_name || 'Verified swk.rent Member'
+  const now = new Date().toISOString()
+
+  const defaultPlanByRole: Record<UserRole, { code: string; badge: string; plan: string; cheque: number; comm: number; fee: number }> = {
+    TENANT: {
+      code: 'CUSTOM_TENANT',
+      badge: 'Verified Tenant · Custom 12x UAEDDS & RERA Shield',
+      plan: '12x Monthly UAEDDS Direct Debit + Flat AED 2,999 Direct Landlord Access',
+      cheque: 12,
+      comm: 5.0,
+      fee: 2999,
+    },
+    LANDLORD: {
+      code: 'CUSTOM_LANDLORD',
+      badge: 'Owner360 Landlord · Custom Self-Serve / Managed Plan',
+      plan: 'Tier 1: Direct Self-Serve (AED 0 Landlord Fee · Tenant Pays Flat AED 2,999)',
+      cheque: 1,
+      comm: 0,
+      fee: 2999,
+    },
+    AGENT: {
+      code: 'CUSTOM_AGENT',
+      badge: 'RERA Broker · AED 0 XML Sync & Protected A2A Split',
+      plan: 'Protected 50% A2A / 50% SWK Commission Split + AED 0 Unlimited XML Sync',
+      cheque: 2,
+      comm: 5.0,
+      fee: 0,
+    },
+    DEVELOPER: {
+      code: 'CUSTOM_DEVELOPER',
+      badge: 'Developer BTR · FIFO Anti-Cannibalization Pool',
+      plan: 'Bulk Handover FIFO Queue (Max 3 Units Public per Layout · Yield Floor Protected)',
+      cheque: 1,
+      comm: 5.0,
+      fee: 0,
+    },
+    ADMIN: {
+      code: 'CUSTOM_ADMIN',
+      badge: 'SWK Super-Admin · Full Platform & Escrow Governance',
+      plan: 'Full 1,000-User MVP Cohort Governance + External OS REST API Bridge',
+      cheque: 12,
+      comm: 5.0,
+      fee: 2999,
+    },
+  }
+
+  const preset = defaultPlanByRole[role] || defaultPlanByRole.TENANT
+  const apiKey = `swk_${role.slice(0, 3).toLowerCase()}_live_****_${String(1000 + userId)}`
+  const webhook = `https://swk.rent/api/custom-webhooks/user-${userId}`
+  const signature = `${fullName} · Verified ${role} on https://swk.rent`
+
+  db.prepare(`
+    INSERT OR IGNORE INTO user_custom_usage (
+      user_id, user_email, persona_code, persona_badge, custom_plan_name,
+      default_cheque_mode, preferred_emirate, chiller_free_preferred, max_commute_difc_mins,
+      custom_commission_pct, custom_flat_fee_aed, fifo_queue_cap_units,
+      personal_api_key_masked, custom_webhook_url, whatsapp_pitch_signature,
+      listings_synced_count, portal_credit_burn_aed, estimated_competitor_spend_saved_aed,
+      viewings_booked_or_dispatched, digital_offers_submitted_or_reviewed,
+      workflows_signed_off_count, whatsapp_pitches_generated, api_webhook_events_count, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'Dubai', 1, 40, ?, ?, 3, ?, ?, ?, 0, 0, 12000, 1, 0, 0, 1, 1, ?)
+  `).run(
+    userId,
+    email,
+    preset.code,
+    preset.badge,
+    preset.plan,
+    preset.cheque,
+    preset.comm,
+    preset.fee,
+    apiKey,
+    webhook,
+    signature,
+    now,
+  )
+
+  return mapCustomUsageRow(db.prepare('SELECT * FROM user_custom_usage WHERE user_id = ?').get(userId))
+}
+
+export function upsertUserCustomUsage(
+  userId: number,
+  input: {
+    personaBadge?: string
+    commissionSplitRatio?: string
+    customPlanName?: string
+    customPlanTier?: string
+    defaultChequeMode?: ChequeOption
+    preferredEmirate?: 'All' | 'Dubai' | 'Abu Dhabi'
+    chillerFreePreferred?: boolean
+    maxCommuteDifcMins?: number
+    customCommissionPct?: number
+    customFlatFeeAed?: number
+    fifoQueueCapUnits?: number
+    btrFifoQueueCap?: number
+    customWebhookUrl?: string
+    whatsappPitchSignature?: string
+  },
+): UserCustomUsageProfile {
+  const current = getUserCustomUsage(userId)
+  const now = new Date().toISOString()
+
+  db.prepare(`
+    UPDATE user_custom_usage
+    SET persona_badge = ?,
+        custom_plan_name = ?,
+        default_cheque_mode = ?,
+        preferred_emirate = ?,
+        chiller_free_preferred = ?,
+        max_commute_difc_mins = ?,
+        custom_commission_pct = ?,
+        custom_flat_fee_aed = ?,
+        fifo_queue_cap_units = ?,
+        custom_webhook_url = ?,
+        whatsapp_pitch_signature = ?,
+        api_webhook_events_count = api_webhook_events_count + 1,
+        updated_at = ?
+    WHERE user_id = ?
+  `).run(
+    (input.commissionSplitRatio || input.personaBadge)?.trim() || current.personaBadge,
+    (input.customPlanTier || input.customPlanName)?.trim() || current.customPlanName,
+    Number(input.defaultChequeMode) || current.defaultChequeMode,
+    input.preferredEmirate || current.preferredEmirate,
+    typeof input.chillerFreePreferred === 'boolean'
+      ? input.chillerFreePreferred
+        ? 1
+        : 0
+      : current.chillerFreePreferred
+        ? 1
+        : 0,
+    Number(input.maxCommuteDifcMins) || current.maxCommuteDifcMins,
+    input.customCommissionPct !== undefined ? Number(input.customCommissionPct) : current.customCommissionPct,
+    input.customFlatFeeAed !== undefined ? Number(input.customFlatFeeAed) : current.customFlatFeeAed,
+    Number(input.btrFifoQueueCap ?? input.fifoQueueCapUnits) || current.fifoQueueCapUnits,
+    input.customWebhookUrl?.trim() || current.customWebhookUrl,
+    input.whatsappPitchSignature?.trim() || current.whatsappPitchSignature,
+    now,
+    userId,
+  )
+
+  return getUserCustomUsage(userId)
+}
+
+export function incrementUserUsageMetric(
+  userId: number | null | undefined,
+  metric:
+    | 'listings'
+    | 'listingsSyncedCount'
+    | 'viewings'
+    | 'viewingsBookedOrDispatched'
+    | 'offers'
+    | 'digitalOffersSubmittedOrReviewed'
+    | 'workflows'
+    | 'workflowsSignedOffCount'
+    | 'pitches'
+    | 'whatsappPitchesGenerated'
+    | 'webhooks'
+    | 'apiWebhookEventsCount',
+  delta = 1,
+) {
+  if (!userId) return
+  getUserCustomUsage(userId)
+  const colMap: Record<typeof metric, string> = {
+    listings: 'listings_synced_count',
+    listingsSyncedCount: 'listings_synced_count',
+    viewings: 'viewings_booked_or_dispatched',
+    viewingsBookedOrDispatched: 'viewings_booked_or_dispatched',
+    offers: 'digital_offers_submitted_or_reviewed',
+    digitalOffersSubmittedOrReviewed: 'digital_offers_submitted_or_reviewed',
+    workflows: 'workflows_signed_off_count',
+    workflowsSignedOffCount: 'workflows_signed_off_count',
+    pitches: 'whatsapp_pitches_generated',
+    whatsappPitchesGenerated: 'whatsapp_pitches_generated',
+    webhooks: 'api_webhook_events_count',
+    apiWebhookEventsCount: 'api_webhook_events_count',
+  }
+  const col = colMap[metric] || 'whatsapp_pitches_generated'
+  db.prepare(
+    `UPDATE user_custom_usage SET ${col} = ${col} + ?, updated_at = ? WHERE user_id = ?`,
+  ).run(delta, new Date().toISOString(), userId)
+}
+
 export function mapUserRow(r: any): AuthUser {
   return {
     id: r.id,
@@ -1586,6 +2085,7 @@ export function mapUserRow(r: any): AuthUser {
     agencyOrCompanyName: r.agency_or_company_name ?? null,
     titleDeedRef: r.title_deed_ref ?? null,
     createdAt: r.created_at,
+    customUsage: getUserCustomUsage(r.id, r),
   }
 }
 

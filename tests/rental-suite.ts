@@ -373,8 +373,78 @@ async function runTests() {
     assert.equal(osWebhookRes.json().affectedUnitCode, 'SWK-RENT-102')
   })
 
+  // 18. 8 Dedicated Demo Accounts Across All 5 Roles & UAE PASS Quick Auth
+  const expectedDemoEmails = [
+    'admin@swk.rent',
+    'advisor@swk.rent',
+    'partner@apexcrest.ae',
+    'landlord@swk.rent',
+    'familyoffice@swk.rent',
+    'developer@selectgroup.ae',
+    'tenant@uaepass.ae',
+    'expat@swk.rent',
+  ]
+  for (const demoEmail of expectedDemoEmails) {
+    const demoLoginRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { demoEmail },
+    })
+    assert.equal(demoLoginRes.statusCode, 200, `Demo login failed for ${demoEmail}`)
+    const demoUser = demoLoginRes.json().user
+    assert.equal(demoUser.email, demoEmail)
+    assert.ok(demoUser.customUsage, `Missing customUsage profile for ${demoEmail}`)
+    assert.equal(demoUser.customUsage.portalCreditBurnAed, 0)
+  }
+  const uaePassLoginRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { uaePassQuickAuth: true, email: 'landlord@swk.rent' },
+  })
+  check('All 8 Dedicated Demo Accounts across all 5 roles + UAE PASS 1-Tap Sign-In resolve with connected Custom Usage profiles', () => {
+    assert.equal(uaePassLoginRes.statusCode, 200)
+    assert.equal(uaePassLoginRes.json().user.role, 'LANDLORD')
+    assert.ok(boot.demoUsers.length >= 8)
+  })
+
+  // 19. Connected Custom Usage Profile Update & Live Telemetry Tracking
+  const updateCuRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/custom-usage',
+    headers: { 'x-swk-session': agentToken },
+    payload: {
+      customPlanTier: 'RERA Broker Elite — Custom 50/50 Split & AED 0 XML Sync',
+      defaultChequeMode: 1,
+      preferredEmirate: 'Dubai',
+      chillerFreePreferred: true,
+      maxCommuteDifcMins: 25,
+      customFlatFeeAed: 2500,
+      customCommissionPct: 5,
+      whatsappPitchSignature: 'Zayd Al Maktoum · BRN-77812 · https://swk.rent',
+    },
+  })
+  const trackCuRes = await app.inject({
+    method: 'POST',
+    url: '/api/auth/custom-usage/track',
+    headers: { 'x-swk-session': agentToken },
+    payload: {
+      metric: 'whatsappPitchesGenerated',
+      delta: 3,
+    },
+  })
+  check('POST /api/auth/custom-usage & POST /api/auth/custom-usage/track persist per-account custom rules and live telemetry counters', () => {
+    assert.equal(updateCuRes.statusCode, 200)
+    const cu = updateCuRes.json().customUsage
+    assert.equal(cu.defaultChequeMode, 1)
+    assert.equal(cu.preferredEmirate, 'Dubai')
+    assert.equal(cu.chillerFreePreferred, true)
+    assert.equal(cu.customFlatFeeAed, 2500)
+    assert.equal(trackCuRes.statusCode, 200)
+    assert.ok(trackCuRes.json().customUsage.whatsappPitchesGenerated >= 3)
+  })
+
   await app.close()
-  console.log(`\nALL ${passed}/${passed} SWK.RENT UAE RENTAL PLATFORM, OS REST API, RBAC & 7-STAGE WORKFLOW CHECKS PASSED!`)
+  console.log(`\nALL ${passed}/${passed} SWK.RENT UAE RENTAL PLATFORM, OS REST API, RBAC, 8 DEMO ACCOUNTS & CUSTOM USAGE CHECKS PASSED!`)
 }
 
 runTests().catch(err => {
