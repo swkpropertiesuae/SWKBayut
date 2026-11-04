@@ -17,16 +17,18 @@ async function runTests() {
     console.log(`  ✓ [${passed}] ${name}`)
   }
 
-  console.log('Running SWKBayut UAE Rental OS & Agent/Developer Super-Suite...')
+  console.log('Running swk.rent UAE Rental Platform, OS REST API Bridge & Agent/Developer Super-Suite...')
 
-  // 1. Health & OS Bridge + Android Package ID
+  // 1. Health & OS REST API Bridge + Android/iOS Package ID
   const healthRes = await app.inject({ method: 'GET', url: '/api/health' })
-  check('GET /api/health returns ORN 51517, swkpropertiesOS link & Android package ID', () => {
+  check('GET /api/health returns swk.rent domain, ORN 51517, OS REST API mode & ae.swk.rent package ID', () => {
     assert.equal(healthRes.statusCode, 200)
     const body = healthRes.json()
     assert.equal(body.ok, true)
+    assert.equal(body.domain, 'https://swk.rent')
     assert.equal(body.reraOrn, '51517')
-    assert.equal(body.androidPackage, 'ae.swkproperties.bayut')
+    assert.equal(body.androidPackage, 'ae.swk.rent')
+    assert.equal(body.iosBundleId, 'ae.swk.rent')
   })
 
   // 2. Bootstrap Payload
@@ -169,7 +171,7 @@ async function runTests() {
   check('POST /api/crm-sync/import imports XML feed at AED 0 cost & computes annual portal savings', () => {
     assert.equal(crmRes.statusCode, 200)
     const body = crmRes.json()
-    assert.equal(body.savings.swkBayutUpfrontListingCostAed, 0)
+    assert.equal(body.savings.swkRentUpfrontListingCostAed, 0)
     assert.ok(body.savings.annualPortalSavingsAed >= 150000)
   })
 
@@ -217,7 +219,7 @@ async function runTests() {
   })
 
   // 14. User Signup, Signin, Session Token & 1,000-User MVP Cohort Onboarding
-  const uniqueEmail = `mvp.broker.${Date.now()}@swkpropertiesuae.com`
+  const uniqueEmail = `mvp.broker.${Date.now()}@swk.rent`
   const signupRes = await app.inject({
     method: 'POST',
     url: '/api/auth/signup',
@@ -336,8 +338,43 @@ async function runTests() {
     assert.match(finalWf.gatePassCode, /^NOC-PASS-/)
   })
 
+  // 17. External OS REST API & Webhook Integration Bridge
+  const osStatusRes = await app.inject({ method: 'GET', url: '/api/os-api/status' })
+  const osSyncRes = await app.inject({
+    method: 'POST',
+    url: '/api/os-api/sync-inventory',
+    payload: {
+      unitsPayload: [
+        {
+          unitCode: 'SWK-RENT-102',
+          annualRent1Cheque: 185000,
+          availabilityStatus: 'Available',
+        },
+      ],
+    },
+  })
+  const osWebhookRes = await app.inject({
+    method: 'POST',
+    url: '/api/os-api/webhook',
+    payload: {
+      eventType: 'KEY_VAULT_VERIFIED',
+      unitCode: 'SWK-RENT-102',
+      keyVaultTag: 'SMARTLOCK-DV2-4805-VERIFIED',
+    },
+  })
+  check('GET /api/os-api/status, POST /api/os-api/sync-inventory & POST /api/os-api/webhook sync external OS via REST API', () => {
+    assert.equal(osStatusRes.statusCode, 200)
+    assert.equal(osStatusRes.json().domain, 'https://swk.rent')
+    assert.equal(osStatusRes.json().integrationMode, 'REST_API_AND_WEBHOOKS_ONLY')
+    assert.equal(osSyncRes.statusCode, 200)
+    assert.equal(osSyncRes.json().ok, true)
+    assert.equal(osSyncRes.json().syncedUnitsCount, 1)
+    assert.equal(osWebhookRes.statusCode, 200)
+    assert.equal(osWebhookRes.json().affectedUnitCode, 'SWK-RENT-102')
+  })
+
   await app.close()
-  console.log(`\nALL ${passed}/${passed} SWKBAYUT UAE RENTAL OS, RBAC, 7-STAGE WORKFLOW & SUPER-HUB CHECKS PASSED!`)
+  console.log(`\nALL ${passed}/${passed} SWK.RENT UAE RENTAL PLATFORM, OS REST API, RBAC & 7-STAGE WORKFLOW CHECKS PASSED!`)
 }
 
 runTests().catch(err => {

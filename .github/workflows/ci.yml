@@ -1,4 +1,4 @@
-name: SWKBayut CI & Acceptance Suite
+name: SWK Rent (swk.rent) CI & Acceptance Suite
 
 on:
   push:

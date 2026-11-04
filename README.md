@@ -1,27 +1,37 @@
-# SWK Rent (SWKBayut) — UAE Verified Rental Marketplace & Tenancy OS
+# SWK Rent (`swk.rent`) — UAE Dedicated Rental Marketplace & Tenancy Platform
 
 <p align="center">
-  <img src="public/brand/swk-rent/black/Full_logo/SWK_Rent_Full_logo_512px.png" alt="SWK Rent — SWK Properties LLC" width="220" />
+  <img src="public/brand/swk-rent/black/Full_logo/SWK_Rent_Full_logo_512px.png" alt="SWK Rent — swk.rent" width="220" />
 </p>
 
 <p align="center">
   <img src="public/brand/app-icons/SWK_Matte_Gold_Wordmark_App_Icon_Preview.png" alt="SWK Matte Gold Android & iOS App Icons" width="540" />
 </p>
 
-**UAE's First Operating-System-Backed Dedicated Rental Platform** — built for **SWK Properties L.L.C.** (RERA ORN `51517`) and synchronized with **[SWK Properties OS](https://github.com/swkpropertiesuae/swkpropertiesOS)**. Ready for first **1,000-User MVP Launch** across Web, Native Android (`ae.swkproperties.bayut`), and iOS (`ae.swkproperties.bayut`).
+**UAE's Dedicated Verified Rental Platform (`https://swk.rent`)** — built for **SWK Properties L.L.C.** (RERA ORN `51517`) with an **API-First External OS Bridge (`/api/os-api/*`)**. Ready for the **First 1,000-User MVP Launch** across Web (`https://swk.rent`), Native Android (`ae.swk.rent`), and iOS (`ae.swk.rent`).
+
+---
+
+## 🔗 External OS REST API & Webhook Integration (`/api/os-api/*`)
+
+`swk.rent` operates as an independent, self-contained rental platform and integrates with external operating systems strictly via **REST API & Webhooks**:
+- **`GET /api/os-api/status`**: Returns active OS REST API configuration (`SWK_OS_API_URL`, default `https://api.os.swk.rent`), webhook endpoint (`https://swk.rent/api/os-api/webhook`), and recent sync telemetry.
+- **`POST /api/os-api/config`**: Dynamically updates the external OS API base URL, API key, and auto-sync mode.
+- **`POST /api/os-api/sync-inventory`**: Pulls Title-Deed and Key-Vault verified rental inventory via REST API (`GET {SWK_OS_API_URL}/api/public/properties?purpose=rent` or direct JSON payload).
+- **`POST /api/os-api/webhook`**: Receives real-time inbound webhooks from the external OS for unit availability locks, rent updates, and key-vault status changes.
 
 ---
 
 ## 🔐 5-Persona Role-Based Access Control (RBAC), Sign-Up & Sign-In
 
-Every account is protected with cryptographic `scrypt` password hashing, `SHA-256` session tokens, brute-force lockout protection, `@fastify/helmet`, and `@fastify/rate-limit`.
+Every account is protected with cryptographic `scrypt` password hashing, `SHA-256` session tokens (`swkrent_session`), brute-force lockout protection, `@fastify/helmet`, and `@fastify/rate-limit`.
 
 | Role | Demo Email | Demo Password | Key Capabilities |
 | :--- | :--- | :--- | :--- |
-| **`ADMIN`** | `admin@swkpropertiesuae.com` | `SwkRent2026!` | Full 1,000-User MVP cohort telemetry, compliance audit trail, workflow override, and escrow guard. |
-| **`AGENT`** (SWK) | `advisor@swkpropertiesuae.com` | `SwkRent2026!` | `AED 0` CRM XML feed import, GPS key vault dispatch, 1-Tap WhatsApp client pitch, Stage 5 Ejari & Stage 7 NOC sign-off. |
+| **`ADMIN`** | `admin@swk.rent` | `SwkRent2026!` | Full 1,000-User MVP cohort telemetry, OS REST API bridge config, compliance audit trail, workflow override. |
+| **`AGENT`** (SWK) | `advisor@swk.rent` | `SwkRent2026!` | `AED 0` CRM XML feed import, GPS key vault dispatch, 1-Tap WhatsApp client pitch, Stage 5 Ejari & Stage 7 NOC sign-off. |
 | **`AGENT`** (A2A) | `partner@apexcrest.ae` | `SwkRent2026!` | Protected 7-day A2A client registration & automated `50% Partner / 25% SWK / 25% Advisor` split lock. |
-| **`LANDLORD`** | `landlord@swkpropertiesuae.com` | `SwkRent2026!` | Direct Title Deed onboarding (`AED 0` landlord fee), Stage 3 1-Click Offer Approval, Reverse Brief bidding, PDC vault. |
+| **`LANDLORD`** | `landlord@swk.rent` | `SwkRent2026!` | Direct Title Deed onboarding (`AED 0` landlord fee), Stage 3 1-Click Offer Approval, Reverse Brief bidding, PDC vault. |
 | **`DEVELOPER`** | `developer@selectgroup.ae` | `SwkRent2026!` | Bulk Tower Handover BTR Pools, FIFO Anti-Cannibalization public queue caps (`max 3 units/layout`), RERA yield floor protection. |
 | **`TENANT`** | `tenant@uaepass.ae` | `SwkRent2026!` | True Monthly Cost Calculator, Instant GPS/Smart-Lock viewings, 48h Offer Lock, Reverse Rental Briefs, RERA Renewal Shield. |
 
@@ -39,11 +49,11 @@ Every account is protected with cryptographic `scrypt` password hashing, `SHA-25
 
 ---
 
-## 📱 Native Android (`android/`) & iOS (`ios/`) Apps
+## 📱 Native Android (`android/`) & iOS (`ios/SWKRent/`) Apps (`ae.swk.rent`)
 
 Both official **SWK Matte Gold** app icon variants (**Emblem + SWK** and **SWK Wordmark**) are bundled in:
-- **Android (`android/app/src/main/res/mipmap-*` & `ic_launcher-playstore.png`):** Adaptive launcher icons (`v26` & `v33` with monochrome layer), dynamic `<activity-alias>` icon switcher (`SwkAndroidBridge.setLauncherIconVariant`), Gradle 8.9 wrapper (`gradlew` / `gradlew.bat`), and automated GitHub Actions APK/AAB workflow (`.github/workflows/android-apk.yml`).
-- **iOS (`ios/SWKBayut/Assets.xcassets/`):** `AppIcon.appiconset` (Primary Emblem + SWK `1024x1024`) and `AppIconWordmark.appiconset` (Alternate SWK Wordmark `1024x1024`) with `WKWebView` + FaceID/TouchID bridge (`SwkIosBridge`).
+- **Android (`android/app/src/main/res/mipmap-*` & `ic_launcher-playstore.png`):** Application ID `ae.swk.rent`, deep-link scheme `swkrent://open`, adaptive launcher icons (`v26` & `v33`), dynamic `<activity-alias>` icon switcher (`SwkAndroidBridge.setLauncherIconVariant`), Gradle 8.9 wrapper, and automated GitHub Actions APK/AAB workflow (`.github/workflows/android-apk.yml`).
+- **iOS (`ios/SWKRent/Assets.xcassets/`):** Bundle ID `ae.swk.rent`, `AppIcon.appiconset` (Primary Emblem + SWK `1024x1024`) and `AppIconWordmark.appiconset` (Alternate SWK Wordmark `1024x1024`) with `WKWebView` + FaceID/TouchID bridge (`SwkIosBridge`).
 
 ---
 
@@ -52,7 +62,7 @@ Both official **SWK Matte Gold** app icon variants (**Emblem + SWK** and **SWK W
 ```bash
 npm run dev          # Starts API (:8090) + Web (:5175)
 npm run typecheck    # TypeScript validation (0 errors)
-npm test             # Run 20/20 UAE Rental OS, RBAC & 7-Stage Workflow checks
+npm test             # Run 21/21 swk.rent, OS REST API, RBAC & 7-Stage Workflow checks
 npm run build        # Production Web + Server bundle
 npm run mobile:sync  # Sync production Web bundle into Android & iOS native assets
 ```

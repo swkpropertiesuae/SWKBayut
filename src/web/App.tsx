@@ -109,7 +109,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('swkbayut_session_token')
+      return localStorage.getItem('swkrent_session_token')
     } catch {
       return null
     }
@@ -132,12 +132,15 @@ export default function App() {
   const [signupCompany, setSignupCompany] = useState('SWK Properties L.L.C.')
   const [signupTitleDeed, setSignupTitleDeed] = useState('TD-DXB-2026-44109')
 
-  // 7-Stage Deal Workflow New Deal & Icon Variant State
+  // 7-Stage Deal Workflow New Deal, OS REST API Config & Icon Variant State
   const [wfUnitId, setWfUnitId] = useState(1)
   const [wfTenantName, setWfTenantName] = useState('Layla Al Qasimi')
   const [wfAnnualRent, setWfAnnualRent] = useState(125000)
   const [wfCheques, setWfCheques] = useState<ChequeOption>(2)
   const [appIconVariant, setAppIconVariant] = useState<'emblem' | 'wordmark'>('emblem')
+  const [osApiUrlInput, setOsApiUrlInput] = useState('https://api.os.swk.rent')
+  const [osApiKeyInput, setOsApiKeyInput] = useState('')
+  const [osSyncBusy, setOsSyncBusy] = useState(false)
 
   // Marketplace Filters & Live Payment Mode
   const [searchQuery, setSearchQuery] = useState('')
@@ -258,8 +261,11 @@ export default function App() {
         setCurrentUser(json.currentUser)
         setActiveRole(json.currentUser.role)
       }
+      if (json.osBridge?.osApiUrl) {
+        setOsApiUrlInput(json.osBridge.osApiUrl)
+      }
     } catch (e: any) {
-      showNotice('err', e?.message || 'Failed to load SWKBayut OS data')
+      showNotice('err', e?.message || 'Failed to load swk.rent platform data')
     } finally {
       setLoading(false)
     }
@@ -334,7 +340,7 @@ export default function App() {
       `📊 *True Monthly All-In:* ${aed(cost.trueMonthlyAllInOperatingCostAed)}/mo (Includes Chiller: ${u.chillerProvider}, DEWA & 5% Muni)`,
       `🔑 *Viewing:* ${u.keyCustody} | 🚇 DIFC: ${bld?.commuteDifcMins ?? 18} mins`,
       `🛡 *DLD Permit:* #${u.trakheesiPermitNo} | Protected 50/50 A2A & RERA Shield`,
-      `👉 Book Instant GPS Viewing or Lock Unit for 48h on SWKBayut`,
+      `👉 Book Instant GPS Viewing or Lock Unit for 48h on https://swk.rent`,
     ].join('\n')
     if (navigator.clipboard) {
       void navigator.clipboard.writeText(pitch)
@@ -374,7 +380,7 @@ export default function App() {
     setActiveRole(json.user.role)
     setSessionToken(json.sessionToken)
     try {
-      localStorage.setItem('swkbayut_session_token', json.sessionToken)
+      localStorage.setItem('swkrent_session_token', json.sessionToken)
     } catch {}
     setAuthModalOpen(false)
     showNotice('ok', `Signed in as ${json.user.fullName} [${json.user.role}]`)
@@ -393,7 +399,7 @@ export default function App() {
       setActiveRole(json.user.role)
       setSessionToken(json.sessionToken)
       try {
-        localStorage.setItem('swkbayut_session_token', json.sessionToken)
+        localStorage.setItem('swkrent_session_token', json.sessionToken)
       } catch {}
       showNotice('ok', `Switched Active RBAC Persona to ${json.user.fullName} (${ROLE_CAPABILITIES[role].label})`)
       await refreshData(json.sessionToken)
@@ -430,10 +436,10 @@ export default function App() {
     setActiveRole(json.user.role)
     setSessionToken(json.sessionToken)
     try {
-      localStorage.setItem('swkbayut_session_token', json.sessionToken)
+      localStorage.setItem('swkrent_session_token', json.sessionToken)
     } catch {}
     setAuthModalOpen(false)
-    showNotice('ok', `Welcome to SWK RENT MVP Cohort, ${json.user.fullName} (${json.user.role})!`)
+    showNotice('ok', `Welcome to swk.rent MVP Cohort, ${json.user.fullName} (${json.user.role})!`)
     await refreshData(json.sessionToken)
   }
 
@@ -442,10 +448,50 @@ export default function App() {
     setCurrentUser(null)
     setSessionToken(null)
     try {
-      localStorage.removeItem('swkbayut_session_token')
+      localStorage.removeItem('swkrent_session_token')
     } catch {}
-    showNotice('ok', 'Signed out of SWK RENT session.')
+    showNotice('ok', 'Signed out of swk.rent session.')
     await refreshData(null)
+  }
+
+  const handleSaveOsApiConfig = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await apiFetch('/api/os-api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        osApiUrl: osApiUrlInput,
+        osApiKey: osApiKeyInput || undefined,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not update OS REST API endpoint')
+      return
+    }
+    setOsApiKeyInput('')
+    showNotice('ok', `External OS REST API endpoint saved: ${json.status.osApiUrl}`)
+    await refreshData()
+  }
+
+  const handleSyncOsInventory = async () => {
+    setOsSyncBusy(true)
+    try {
+      const res = await apiFetch('/api/os-api/sync-inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ osApiUrlOverride: osApiUrlInput }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        showNotice('err', json.error || 'OS REST API sync failed')
+        return
+      }
+      showNotice('ok', `OS REST API Sync Complete: ${json.syncedUnitsCount} units verified via ${json.endpoint}`)
+      await refreshData()
+    } finally {
+      setOsSyncBusy(false)
+    }
   }
 
   const handleCreateWorkflow = async (e: React.FormEvent) => {
@@ -1037,14 +1083,14 @@ export default function App() {
                 <div className="lg:col-span-7 space-y-2.5">
                   <div className="inline-flex flex-wrap items-center gap-2 px-3 py-1 rounded-full bg-[#B89040]/20 border border-[#B89040]/40 text-[#D6B46C] text-[11px] font-semibold">
                     <Sparkles size={13} />
-                    Zero Duplicate Ads · AED 0 Broker Listing Cost · Android App (`ae.swkproperties.bayut`) Ready
+                    swk.rent · Zero Duplicate Ads · AED 0 Broker Listing Cost · Android & iOS (`ae.swk.rent`) Ready
                   </div>
                   <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight leading-tight">
                     Every Unit Deduplicated by Title Deed.{' '}
                     <span className="text-[#D6B46C]">Every Dirham Calculated Upfront.</span>
                   </h1>
                   <p className="text-xs sm:text-sm text-gray-300 leading-relaxed">
-                    Backed live by <strong className="text-white">SWK Properties OS</strong>. Filter by 8:30 AM rush-hour commute, toggle 1–12x Monthly UAEDDS payments, or tap <strong className="text-[#D6B46C]">"WhatsApp Client Pitch"</strong> to share a watermark-free BRN-protected deal sheet in 1 second.
+                    Connected live via <strong className="text-white">External OS REST API & Webhooks</strong>. Filter by 8:30 AM rush-hour commute, toggle 1–12x Monthly UAEDDS payments, or tap <strong className="text-[#D6B46C]">"WhatsApp Client Pitch"</strong> to share a watermark-free BRN-protected deal sheet in 1 second.
                   </p>
                 </div>
 
@@ -1461,7 +1507,7 @@ export default function App() {
                     Stop Paying <span className="text-[#D6B46C]">AED 150,000–350,000/yr</span> for Listing Credits on Duplicate Ads.
                   </h2>
                   <p className="text-xs sm:text-sm text-gray-300">
-                    On SWKBayut, RERA-verified agencies, developers, and property managers sync their <strong className="text-white">PropSpace, Propertybase, Bitrix24, Pixxi, or SWK OS</strong> XML feeds for <strong className="text-emerald-400">AED 0 upfront</strong>. You only share commission or pay a flat transaction fee when a lease actually closes.
+                    On <strong className="text-white">swk.rent</strong>, RERA-verified agencies, developers, and property managers sync their <strong className="text-white">PropSpace, Propertybase, Bitrix24, Pixxi, or External OS REST API</strong> feeds for <strong className="text-emerald-400">AED 0 upfront</strong>. You only share commission or pay a flat transaction fee when a lease actually closes.
                   </p>
 
                   <div className="grid grid-cols-2 gap-4 bg-[#22262B] p-4 rounded-xl border border-white/10 text-xs">
@@ -1493,13 +1539,13 @@ export default function App() {
                     </div>
                     <div className="col-span-2 pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <span className="text-gray-400 block">Bayut / PF Annual Credit Spend</span>
+                        <span className="text-gray-400 block">Legacy Classifieds Credit Spend</span>
                         <strong className="text-lg text-red-400 line-through">
                           {aed(livePortalSavings.traditionalPortalAnnualCostAed)}/yr
                         </strong>
                       </div>
                       <div>
-                        <span className="text-gray-400 block">SWKBayut Listing Cost</span>
+                        <span className="text-gray-400 block">swk.rent Listing Cost</span>
                         <strong className="text-lg text-emerald-400">AED 0 / yr</strong>
                       </div>
                       <div className="bg-emerald-500/20 border border-emerald-400/40 px-3 py-1.5 rounded-xl">
@@ -1609,7 +1655,7 @@ export default function App() {
                       Developer Handover & BTR "FIFO Anti-Cannibalization" Lease-Up Queue
                     </h3>
                     <p className="text-xs text-gray-600 mt-1">
-                      When a new tower hands over 200 units, individual owners listing simultaneously on Bayut crash rents by 15%. Our FIFO Engine shows only <strong>3 units per layout at a time</strong> at a locked RERA/Developer floor rent and auto-releases the next unit upon booking!
+                      When a new tower hands over 200 units, individual owners listing simultaneously on legacy portals crash rents by 15%. Our FIFO Engine shows only <strong>3 units per layout at a time</strong> at a locked RERA/Developer floor rent and auto-releases the next unit upon booking!
                     </p>
                   </div>
                   <TrendingUp className="text-[#17625F] shrink-0" size={26} />
@@ -2302,7 +2348,7 @@ export default function App() {
                     type="submit"
                     className="w-full py-2.5 rounded-xl bg-[#17625F] text-white font-bold hover:opacity-95"
                   >
-                    Verify Title Deed via DLD & Publish to SWKBayut + Owner360
+                    Verify Title Deed via DLD & Publish to swk.rent + Owner360
                   </button>
                 </form>
               </div>
@@ -2404,7 +2450,7 @@ export default function App() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-[#9E7628]">
-                    Synced with SWK Properties OS (`https://github.com/swkpropertiesuae/swkpropertiesOS`)
+                    Synced via External OS REST API (`{data?.osBridge?.osApiUrl ?? 'https://api.os.swk.rent'}`)
                   </span>
                   <h3 className="text-xl font-extrabold">
                     Live Digital Rental Offers & 48-Hour Unit Locks
@@ -2762,7 +2808,7 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-[11px] font-bold uppercase tracking-wider text-[#D6B46C]">
-                        Android (`ae.swkproperties.bayut`) & iOS App Icons
+                        Android & iOS (`ae.swk.rent`) App Icons
                       </span>
                       <h3 className="text-base font-extrabold">
                         Official Matte Gold App Icon Kit
@@ -2921,6 +2967,107 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* External OS REST API & Webhook Integration Control Center */}
+            <div className="swk-obsidian-card text-white rounded-2xl p-5 sm:p-6 border border-[#B89040]/40 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#D6B46C]">
+                    swk.rent API-First Architecture · Zero Direct Repo Coupling
+                  </span>
+                  <h3 className="text-lg sm:text-xl font-extrabold">
+                    External OS REST API & Webhook Integration Bridge
+                  </h3>
+                  <p className="text-xs text-gray-300 mt-0.5">
+                    All property inventory, key-vault telemetry, and 7-stage rental deal updates communicate exclusively via REST API & Webhooks (`GET /api/os-api/status`, `POST /api/os-api/sync-inventory`, `POST /api/os-api/webhook`).
+                  </p>
+                </div>
+                <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-xs font-bold">
+                  REST API Connected · {data?.osBridge?.apiLinkedUnitsCount ?? 6} Units Linked
+                </span>
+              </div>
+
+              <div className="grid lg:grid-cols-12 gap-5 items-start">
+                <form onSubmit={handleSaveOsApiConfig} className="lg:col-span-5 bg-[#22262B] p-4 rounded-xl border border-white/10 space-y-3 text-xs">
+                  <div>
+                    <label className="text-gray-400 block mb-1 font-semibold">
+                      External OS REST API Base URL (`SWK_OS_API_URL`)
+                    </label>
+                    <input
+                      value={osApiUrlInput}
+                      onChange={e => setOsApiUrlInput(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-[#111315] border border-white/15 text-white font-mono text-xs"
+                      placeholder="https://api.os.swk.rent"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-400 block mb-1 font-semibold">
+                      API Bearer Key (`{data?.osBridge?.osApiKeyMasked ?? 'elv_live_****_orn51517'}`)
+                    </label>
+                    <input
+                      type="password"
+                      value={osApiKeyInput}
+                      onChange={e => setOsApiKeyInput(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-[#111315] border border-white/15 text-white font-mono text-xs"
+                      placeholder="Leave blank to keep active key or enter new API key"
+                    />
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    Inbound Webhook Receiver: <code className="text-[#D6B46C]">{data?.osBridge?.webhookEndpoint ?? 'https://swk.rent/api/os-api/webhook'}</code>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="submit"
+                      className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold"
+                    >
+                      Save API Endpoint
+                    </button>
+                    <button
+                      type="button"
+                      disabled={osSyncBusy}
+                      onClick={() => void handleSyncOsInventory()}
+                      className="py-2.5 px-3 rounded-xl swk-gold-gradient text-[#17191C] font-extrabold"
+                    >
+                      {osSyncBusy ? 'Syncing REST API...' : 'Pull OS Inventory via API'}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="lg:col-span-7 bg-[#22262B] p-4 rounded-xl border border-white/10 space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[#D6B46C] uppercase tracking-wider text-[11px]">
+                      Live OS REST API & Webhook Transaction Log
+                    </span>
+                    <span className="text-[11px] text-gray-400">
+                      Domain: <strong className="text-white">https://swk.rent</strong>
+                    </span>
+                  </div>
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {(data?.osBridge?.recentSyncLogs ?? []).map((item: any) => (
+                      <div
+                        key={item.id}
+                        className="p-2.5 rounded-lg bg-[#17191C] border border-white/10 flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-[#B89040]/20 text-[#D6B46C] font-bold text-[10px]">
+                              {item.direction}
+                            </span>
+                            <span className="font-bold text-white">{item.event_type}</span>
+                            <span className="text-emerald-400 text-[11px] font-semibold">{item.status}</span>
+                          </div>
+                          <div className="text-gray-300 text-[11px] mt-0.5">{item.payload_summary}</div>
+                          <div className="text-gray-500 font-mono text-[10px]">{item.endpoint}</div>
+                        </div>
+                        <span className="text-[10px] text-gray-400">
+                          {String(item.created_at).slice(11, 19)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </main>
@@ -3012,10 +3159,10 @@ export default function App() {
                     {(
                       [
                         { role: 'TENANT', email: 'tenant@uaepass.ae', label: 'Tenant (Alexander Vance)' },
-                        { role: 'LANDLORD', email: 'landlord@swkpropertiesuae.com', label: 'Landlord (Dr. Khalid)' },
-                        { role: 'AGENT', email: 'advisor@swkpropertiesuae.com', label: 'SWK Advisor (M. Haseeb)' },
+                        { role: 'LANDLORD', email: 'landlord@swk.rent', label: 'Landlord (Dr. Khalid)' },
+                        { role: 'AGENT', email: 'advisor@swk.rent', label: 'SWK Advisor (M. Haseeb)' },
                         { role: 'DEVELOPER', email: 'developer@selectgroup.ae', label: 'Developer (Select Group)' },
-                        { role: 'ADMIN', email: 'admin@swkpropertiesuae.com', label: 'SWK Admin (ORN 51517)' },
+                        { role: 'ADMIN', email: 'admin@swk.rent', label: 'SWK Admin (ORN 51517)' },
                       ] as const
                     ).map(item => (
                       <button

@@ -6,4 +6,4 @@ pluginManagement {
     }
 }
 include ':app'
-rootProject.name = "SWKBayut-Android"
+rootProject.name = "SWKRent-Android"

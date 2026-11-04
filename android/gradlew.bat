@@ -1,4 +1,4 @@
-@rem Gradle startup script for Windows — SWKBayut Android (Gradle 8.9)
+@rem Gradle startup script for Windows — SWK Rent Android (Gradle 8.9)
 @if "%DEBUG%"=="" @echo off
 where gradle >nul 2>nul
 if %ERRORLEVEL% EQU 0 (

@@ -1,12 +1,13 @@
 services:
-  swkbayut:
+  swkrent:
     build: .
-    container_name: swkbayut-uae-rental-os
+    container_name: swk-rent-uae-platform
     restart: unless-stopped
     ports:
       - "8090:8090"
     environment:
       - NODE_ENV=production
       - PORT=8090
+      - SWK_OS_API_URL=https://api.os.swk.rent
     volumes:
       - ./data:/app/data

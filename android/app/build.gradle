@@ -8,12 +8,12 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     defaultConfig {
-        applicationId "ae.swkproperties.bayut"
+        applicationId "ae.swk.rent"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 100
         versionName "1.0.0"
-        buildConfigField "String", "SWK_SERVER_URL", "\"https://rent.swkpropertiesuae.com\""
+        buildConfigField "String", "SWK_SERVER_URL", "\"https://swk.rent\""
     }
 
     buildFeatures {

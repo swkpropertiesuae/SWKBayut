@@ -1,7 +1,6 @@
 /**
- * SWKBayut Shared UAE Rental Intelligence, Loophole-Protection &
- * Agent / Developer / Property Management Super-Engine
- * Synchronized with SWK Properties OS (RERA ORN 51517)
+ * SWK Rent (swk.rent) Shared UAE Rental Intelligence, Loophole-Protection &
+ * Agent / Developer / Property Management Super-Engine (RERA ORN 51517)
  */
 
 export type SupplyTier = 'SWK_EXCLUSIVE' | 'A2A_PARTNER' | 'DIRECT_LANDLORD'
@@ -379,13 +378,13 @@ export function classifyMaintenanceResponsibility(params: {
 
 // ------------------------------------------------------------------
 // NEW SUPER-ENGINE 1: Agency & Developer Portal Cost Savings Calculator
-// (Zero-Credit-Burn Model vs. Bayut / Property Finder / Dubizzle)
+// (Zero-Credit-Burn Model vs. Traditional Listing Portals)
 // ------------------------------------------------------------------
 export interface PortalSavingsAnalysis {
   activeListingsCount: number
   agentsCount: number
   traditionalPortalAnnualCostAed: number
-  swkBayutUpfrontListingCostAed: number
+  swkRentUpfrontListingCostAed: number
   annualPortalSavingsAed: number
   monthlyCashflowSavedAed: number
   costPerVerifiedViewingAed: number
@@ -399,17 +398,17 @@ export function calculatePortalSavingsVsCompetitors(params: {
   const listings = Math.max(1, Number(params.activeListingsCount) || 25)
   const agents = Math.max(1, Number(params.agentsCount) || 10)
 
-  // UAE agencies typically pay AED 1,800–2,800/yr per listing slot + TruCheck/Featured credit burn + seat fees across Bayut/PF
-  const bayutAndPfAnnualEstimate = Math.round(listings * 2400 + agents * 4800)
-  const swkBayutUpfrontListingCostAed = 0 // 100% Free to list verified Form A / Title Deed mandates
+  // UAE agencies typically pay AED 1,800–2,800/yr per listing slot + featured credit burn + seat fees across legacy portals
+  const legacyPortalsAnnualEstimate = Math.round(listings * 2400 + agents * 4800)
+  const swkRentUpfrontListingCostAed = 0 // 100% Free to list verified Form A / Title Deed mandates on swk.rent
 
   return {
     activeListingsCount: listings,
     agentsCount: agents,
-    traditionalPortalAnnualCostAed: bayutAndPfAnnualEstimate,
-    swkBayutUpfrontListingCostAed,
-    annualPortalSavingsAed: bayutAndPfAnnualEstimate,
-    monthlyCashflowSavedAed: Math.round(bayutAndPfAnnualEstimate / 12),
+    traditionalPortalAnnualCostAed: legacyPortalsAnnualEstimate,
+    swkRentUpfrontListingCostAed,
+    annualPortalSavingsAed: legacyPortalsAnnualEstimate,
+    monthlyCashflowSavedAed: Math.round(legacyPortalsAnnualEstimate / 12),
     costPerVerifiedViewingAed: 0,
     wasteEliminatedPct: 100,
   }

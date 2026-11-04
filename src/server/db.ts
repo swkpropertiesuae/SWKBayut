@@ -18,7 +18,7 @@ import { hashPassword } from './auth'
 const dataDir = path.resolve('data')
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
 
-export const db = new Database(path.join(dataDir, 'swkbayut.db'))
+export const db = new Database(path.join(dataDir, 'swkrent.db'))
 db.pragma('journal_mode = WAL')
 db.pragma('synchronous = NORMAL')
 db.pragma('busy_timeout = 5000')
@@ -336,6 +336,25 @@ export function initSchemaAndSeed() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS os_api_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      os_api_url TEXT NOT NULL,
+      os_api_key_masked TEXT NOT NULL,
+      webhook_endpoint TEXT NOT NULL,
+      auto_sync_enabled INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS os_api_sync_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      direction TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      status TEXT NOT NULL,
+      payload_summary TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON auth_sessions(user_id);
@@ -343,6 +362,23 @@ export function initSchemaAndSeed() {
     CREATE INDEX IF NOT EXISTS idx_workflows_stage ON rental_workflows(current_stage);
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
   `)
+
+  // Seed External OS REST API Configuration & Initial Sync Log
+  const osCfgCount = (db.prepare('SELECT COUNT(*) as c FROM os_api_config').get() as { c: number }).c
+  if (osCfgCount === 0) {
+    const defaultOsApiUrl = process.env.SWK_OS_API_URL || 'https://api.os.swk.rent'
+    db.prepare(`
+      INSERT INTO os_api_config (id, os_api_url, os_api_key_masked, webhook_endpoint, auto_sync_enabled, updated_at)
+      VALUES (1, ?, 'elv_live_****_orn51517', 'https://swk.rent/api/os-api/webhook', 1, '2026-11-04T04:00:00Z')
+    `).run(defaultOsApiUrl)
+
+    db.prepare(`
+      INSERT INTO os_api_sync_logs (direction, event_type, endpoint, status, payload_summary, created_at)
+      VALUES
+        ('INVENTORY_PULL', 'OS_INVENTORY_SYNC', ?, '200 OK (6 Verified Units Synced)', 'Pulled Title-Deed & Key-Vault verified rental inventory via REST API', '2026-11-04T04:01:00Z'),
+        ('OUTBOUND_REST', 'WORKFLOW_STAGE_SYNC', ?, '200 OK (Webhook Delivered)', 'Synced 7-stage rental deal pipeline & commission splits to external OS API', '2026-11-04T04:05:00Z')
+    `).run(`${defaultOsApiUrl}/api/public/properties`, `${defaultOsApiUrl}/api/webhooks/swk-rent`)
+  }
 
   // Seed 6 pre-verified accounts across all 5 UAE Rental Roles if empty
   const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c
@@ -356,7 +392,7 @@ export function initSchemaAndSeed() {
     `)
     const now = '2026-11-04T04:00:00Z'
     insertUser.run(
-      'admin@swkpropertiesuae.com',
+      'admin@swk.rent',
       defaultPwHash,
       'Shahid · SWK Managing Director',
       '+971 50 515 1700',
@@ -369,7 +405,7 @@ export function initSchemaAndSeed() {
       now,
     )
     insertUser.run(
-      'advisor@swkpropertiesuae.com',
+      'advisor@swk.rent',
       defaultPwHash,
       'Mohammad Haseeb · Senior RERA Advisor',
       '+971 50 589 1200',
@@ -395,7 +431,7 @@ export function initSchemaAndSeed() {
       now,
     )
     insertUser.run(
-      'landlord@swkpropertiesuae.com',
+      'landlord@swk.rent',
       defaultPwHash,
       'Dr. Khalid Al Mansoori · Owner360 Landlord',
       '+971 50 884 1200',
@@ -436,7 +472,7 @@ export function initSchemaAndSeed() {
 
     db.prepare(`
       INSERT INTO audit_logs (user_id, user_email, user_role, action, entity_type, entity_ref, details, created_at)
-      VALUES (1, 'admin@swkpropertiesuae.com', 'ADMIN', 'MVP_COHORT_INITIALIZED', 'SYSTEM', 'MVP-1000', 'SWK RENT 1,000-User MVP Cohort & 5-Role RBAC Guard initialized (RERA ORN 51517)', ?)
+      VALUES (1, 'admin@swk.rent', 'ADMIN', 'MVP_COHORT_INITIALIZED', 'SYSTEM', 'MVP-1000', 'swk.rent 1,000-User MVP Cohort & 5-Role RBAC Guard initialized (RERA ORN 51517)', ?)
     `).run(now)
   }
 
@@ -763,8 +799,8 @@ export function initSchemaAndSeed() {
     `)
     insertFeed.run(
       'SWK Properties LLC (ORN 51517)',
-      'SWK Properties OS Native Bridge',
-      'https://os.swkpropertiesuae.com/api/syndication/swkbayut.xml',
+      'External OS REST API Bridge',
+      'https://api.os.swk.rent/v1/syndication/rentals.xml',
       48,
       163200,
       '2026-11-04T03:30:00Z',

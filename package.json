@@ -1,8 +1,8 @@
 {
-  "name": "swk-bayut-uae-rental-os",
+  "name": "swk-rent-uae-platform",
   "version": "1.0.0",
   "private": true,
-  "description": "SWKBayut — UAE's First OS-Backed Dedicated Rental Marketplace, BTR Developer Engine & Native Android App (Powered by SWK Properties OS, RERA ORN 51517)",
+  "description": "swk.rent — UAE's Dedicated Verified Rental Marketplace, BTR Developer Engine & Native Android/iOS Apps (RERA ORN 51517)",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"

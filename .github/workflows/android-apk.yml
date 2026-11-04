@@ -1,4 +1,4 @@
-name: Build SWKBayut Android APK & Play Store AAB
+name: Build SWK Rent Android APK & Play Store AAB
 
 on:
   push:
@@ -57,14 +57,14 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: swkbayut-android-debug-apk
+          name: swkrent-android-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
       - name: Upload Signed Play Store AAB & Release APK
         if: env.SWK_KEYSTORE_B64 != ''
         uses: actions/upload-artifact@v4
         with:
-          name: swkbayut-playstore-release-bundle
+          name: swkrent-playstore-release-bundle
           path: |
             android/app/build/outputs/bundle/release/*.aab
             android/app/build/outputs/apk/release/*.apk

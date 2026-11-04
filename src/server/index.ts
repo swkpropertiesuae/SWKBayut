@@ -27,6 +27,13 @@ import {
   hashSessionToken,
 } from './auth'
 import {
+  getOsApiStatus,
+  updateOsApiConfig,
+  syncInventoryFromOsApi,
+  pushEventToOsApi,
+  handleInboundOsWebhook,
+} from './os-api-client'
+import {
   type ChequeOption,
   type SupplyTier,
   type UserRole,
@@ -43,7 +50,7 @@ import {
   calculatePortalSavingsVsCompetitors,
 } from '../shared/uae-rental-rules'
 
-const SESSION_COOKIE_NAME = 'swkbayut_session'
+const SESSION_COOKIE_NAME = 'swkrent_session'
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000 // 7 days
 
 export function resolveRequestUser(req: FastifyRequest): AuthUser | null {
@@ -111,11 +118,13 @@ export function buildServer() {
 
   app.get('/api/health', async () => ({
     ok: true,
-    service: 'SWKBayut UAE Dedicated Rental OS (MVP 1,000-User Production Engine)',
+    service: 'swk.rent UAE Dedicated Rental Platform (MVP 1,000-User Production Engine)',
+    domain: 'https://swk.rent',
     reraOrn: '51517',
-    linkedOs: 'https://github.com/swkpropertiesuae/swkpropertiesOS',
-    androidPackage: 'ae.swkproperties.bayut',
-    iosBundleId: 'ae.swkproperties.bayut',
+    osApiIntegration: 'REST_API_AND_WEBHOOKS_ONLY',
+    osApiUrl: getOsApiStatus().osApiUrl,
+    androidPackage: 'ae.swk.rent',
+    iosBundleId: 'ae.swk.rent',
     rbacRoles: Object.keys(ROLE_CAPABILITIES),
     workflowStagesCount: UAE_RENTAL_WORKFLOW_STAGES.length,
     timestamp: new Date().toISOString(),
@@ -403,16 +412,68 @@ export function buildServer() {
         activeListingsCount: 45,
         agentsCount: 15,
       }),
-      osBridge: {
-        connected: true,
-        sourceRepo: 'https://github.com/swkpropertiesuae/swkpropertiesOS',
-        targetRepo: 'https://github.com/swkpropertiesuae/SWKBayut',
-        androidAppId: 'ae.swkproperties.bayut',
-        iosBundleId: 'ae.swkproperties.bayut',
-        orn: '51517',
-        lastSyncedAt: new Date().toISOString(),
-      },
+      osBridge: getOsApiStatus(),
     }
+  })
+
+  // ------------------------------------------------------------------
+  // EXTERNAL OS REST API & WEBHOOK INTEGRATION ENDPOINTS
+  // ------------------------------------------------------------------
+  app.get('/api/os-api/status', async () => getOsApiStatus())
+
+  app.post('/api/os-api/config', async (req) => {
+    const user = resolveRequestUser(req)
+    const body = (req.body ?? {}) as {
+      osApiUrl?: string
+      osApiKey?: string
+      webhookEndpoint?: string
+      autoSyncEnabled?: boolean
+    }
+    const status = updateOsApiConfig(body)
+    recordAuditLog({
+      user,
+      action: 'OS_API_CONFIG_UPDATED',
+      entityType: 'OS_API',
+      entityRef: status.osApiUrl,
+      details: `Updated external OS REST API endpoint to ${status.osApiUrl}`,
+    })
+    return { ok: true, status }
+  })
+
+  app.post('/api/os-api/sync-inventory', async (req) => {
+    const user = resolveRequestUser(req)
+    const body = (req.body ?? {}) as {
+      osApiUrlOverride?: string
+      unitsPayload?: Array<{
+        swkOsPropertyId?: number
+        unitCode?: string
+        annualRent1Cheque?: number
+        availabilityStatus?: 'Available' | 'Offer Locked (48h)' | 'Ejari Active / Rented'
+        keyVaultTag?: string
+      }>
+    }
+    const result = await syncInventoryFromOsApi(body)
+    recordAuditLog({
+      user,
+      action: 'OS_API_INVENTORY_SYNC',
+      entityType: 'OS_API',
+      entityRef: result.endpoint,
+      details: `Synced ${result.syncedUnitsCount} units via OS REST API (${result.transportNote})`,
+    })
+    return result
+  })
+
+  app.post('/api/os-api/webhook', async (req) => {
+    const body = (req.body ?? {}) as {
+      eventType?: string
+      unitCode?: string
+      swkOsPropertyId?: number
+      availabilityStatus?: 'Available' | 'Offer Locked (48h)' | 'Ejari Active / Rented'
+      annualRent1Cheque?: number
+      keyVaultTag?: string
+      summary?: string
+    }
+    return handleInboundOsWebhook(body)
   })
 
   // ------------------------------------------------------------------
@@ -586,6 +647,20 @@ export function buildServer() {
       details: `${wfRow.workflow_code} advanced to Stage ${nextStage} (${stageMeta.shortTitle}) by ${effectiveName} [${effectiveRole}]`,
     })
 
+    pushEventToOsApi({
+      eventType: `WORKFLOW_STAGE_${nextStage}`,
+      endpointPath: '/api/webhooks/swk-rent',
+      payloadSummary: `${wfRow.workflow_code} (${wfRow.unit_code}) advanced to Stage ${nextStage}: ${stageMeta.shortTitle}`,
+      payload: {
+        workflowCode: wfRow.workflow_code,
+        unitCode: wfRow.unit_code,
+        stage: nextStage,
+        status,
+        ejariNo,
+        gatePassCode,
+      },
+    })
+
     const updated = listRentalWorkflows().find(w => w.id === id)
     return { ok: true, workflow: updated }
   })
@@ -659,6 +734,13 @@ export function buildServer() {
       entityType: 'UNIT',
       entityRef: unit.unitCode,
       details: `Viewing booked for ${unit.unitCode} by ${body.tenantName.trim()}`,
+    })
+
+    pushEventToOsApi({
+      eventType: 'VIEWING_DISPATCHED',
+      endpointPath: '/api/webhooks/swk-rent',
+      payloadSummary: `Key-Vault / Smart-Lock viewing dispatched for ${unit.unitCode} (${body.tenantName.trim()})`,
+      payload: { unitCode: unit.unitCode, tenantName: body.tenantName.trim(), gpsStatus },
     })
 
     const created = db.prepare('SELECT * FROM viewing_bookings WHERE id = ?').get(info.lastInsertRowid)
@@ -813,6 +895,19 @@ export function buildServer() {
       entityType: 'OFFER',
       entityRef: unit.unitCode,
       details: `Offer AED ${Number(body.offeredAnnualRent).toLocaleString('en-US')} submitted by ${body.tenantName.trim()}`,
+    })
+
+    pushEventToOsApi({
+      eventType: 'OFFER_SUBMITTED',
+      endpointPath: '/api/webhooks/swk-rent',
+      payloadSummary: `Digital offer AED ${Number(body.offeredAnnualRent).toLocaleString('en-US')} (${body.chequeOption} chq) locked for ${unit.unitCode}`,
+      payload: {
+        unitCode: unit.unitCode,
+        workflowCode: wfCode,
+        offeredAnnualRent: Number(body.offeredAnnualRent),
+        chequeOption: Number(body.chequeOption) || 1,
+        commissionSplit: cost.commissionSplit,
+      },
     })
 
     const created = db.prepare('SELECT * FROM rental_offers WHERE id = ?').get(info.lastInsertRowid)
@@ -1013,7 +1108,7 @@ export function buildServer() {
         Number(body.bedrooms) || 1,
         Number(body.askingRentAed) || 110000,
         body.selectedPlan || 'Direct Self-Serve (AED 0 Landlord Fee · Tenant Pays Flat AED 2,999)',
-        'Title Deed & UAE PASS Verified — Live on SWKBayut & Owner360',
+        'Title Deed & UAE PASS Verified — Live on swk.rent & Owner360',
         new Date().toISOString(),
       )
     recordAuditLog({
@@ -1190,7 +1285,7 @@ export function buildServer() {
       .run(
         body.agencyName.trim(),
         body.crmProvider.trim(),
-        body.feedUrl?.trim() || 'https://os.swkpropertiesuae.com/api/syndication/feed.xml',
+        body.feedUrl?.trim() || 'https://api.os.swk.rent/v1/syndication/rentals.xml',
         unitsCount,
         savings.annualPortalSavingsAed,
         new Date().toISOString(),
@@ -1256,6 +1351,6 @@ if (
   const port = Number(process.env.PORT ?? 8090)
   const app = buildServer()
   app.listen({ port, host: '0.0.0.0' }).then(() => {
-    console.log(`SWKBayut Rental OS API & Web listening on http://localhost:${port}`)
+    console.log(`swk.rent UAE Rental Platform & OS REST API Bridge listening on http://localhost:${port}`)
   })
 }

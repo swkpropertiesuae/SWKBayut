@@ -22,7 +22,7 @@ final class ViewController: UIViewController, WKScriptMessageHandler, WKNavigati
 
         if let indexURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public") {
             webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
-        } else if let fallbackURL = URL(string: "https://rent.swkpropertiesuae.com/?platform=ios") {
+        } else if let fallbackURL = URL(string: "https://swk.rent/?platform=ios") {
             webView.load(URLRequest(url: fallbackURL))
         }
     }
