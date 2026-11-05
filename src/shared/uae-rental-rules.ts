@@ -796,3 +796,442 @@ export function canRoleAdvanceWorkflowStage(role: UserRole, targetStage: number)
     reason: `Role "${role}" cannot sign off "${def.shortTitle}". Required role: ${def.allowedRolesToAdvance.join(' or ')}.`,
   }
 }
+
+// ------------------------------------------------------------------
+// NEW SUPER-ENGINE 6: Full RBAC Action Catalog, Role Landing Portals,
+// UAE Community Guides & Android Field-Duty GPS Viewing Telemetry
+// ------------------------------------------------------------------
+export interface RbacActionDefinition {
+  action: RbacAction
+  title: string
+  category: 'Marketplace & Deals' | 'Landlord & A2A' | 'Developer & BTR' | 'Tenancy Shield' | 'Executive & OS Bridge'
+  description: string
+  allowedRoles: UserRole[]
+  recommendedTab: 'marketplace' | 'buildings' | 'superhub' | 'workflow' | 'shield' | 'partners' | 'role-portal' | 'auth'
+}
+
+export const RBAC_ACTION_CATALOG: RbacActionDefinition[] = [
+  {
+    action: 'BOOK_VIEWING',
+    title: 'Book Instant GPS / Smart-Lock Viewing',
+    category: 'Marketplace & Deals',
+    description: 'Schedule 60-minute SWK Key-Vault GPS escorted viewings or UAE PASS Smart-Lock self-tours.',
+    allowedRoles: ['TENANT', 'AGENT', 'ADMIN'],
+    recommendedTab: 'marketplace',
+  },
+  {
+    action: 'SUBMIT_OFFER',
+    title: 'Submit Digital Offer & 48h Escrow Unit Lock',
+    category: 'Marketplace & Deals',
+    description: 'Submit binding rental terms with AED 2,000 corporate escrow lock and auto-start a 7-stage deal workflow.',
+    allowedRoles: ['TENANT', 'AGENT', 'ADMIN'],
+    recommendedTab: 'marketplace',
+  },
+  {
+    action: 'DECIDE_OFFER',
+    title: 'Approve / Decline Rental Offer (Owner360)',
+    category: 'Landlord & A2A',
+    description: 'Review tenant KYC & net yield in Owner360 and execute 1-click acceptance or release 48h unit lock.',
+    allowedRoles: ['LANDLORD', 'AGENT', 'DEVELOPER', 'ADMIN'],
+    recommendedTab: 'partners',
+  },
+  {
+    action: 'ONBOARD_LANDLORD_UNIT',
+    title: 'Onboard Direct Title-Deed Property (Tier 1/2/3)',
+    category: 'Landlord & A2A',
+    description: 'Verify DLD Title Deed / Mulkiya via UAE PASS for AED 0 Landlord Fee or 1-Cheque Upfront Payout.',
+    allowedRoles: ['LANDLORD', 'ADMIN'],
+    recommendedTab: 'partners',
+  },
+  {
+    action: 'REGISTER_A2A_MANDATE',
+    title: 'Register Protected 7-Day A2A Co-Broking Client',
+    category: 'Landlord & A2A',
+    description: 'Lock 50% Partner / 25% SWK / 25% Advisor commission split certificate with RERA ORN & BRN attribution.',
+    allowedRoles: ['AGENT', 'ADMIN'],
+    recommendedTab: 'partners',
+  },
+  {
+    action: 'IMPORT_CRM_XML',
+    title: 'Sync CRM XML / JSON Inventory Feed (AED 0)',
+    category: 'Developer & BTR',
+    description: 'Import PropSpace, Propertybase, Bitrix24, Pixxi, or SWK OS feeds with zero portal credit burn.',
+    allowedRoles: ['AGENT', 'DEVELOPER', 'ADMIN'],
+    recommendedTab: 'superhub',
+  },
+  {
+    action: 'CREATE_DEVELOPER_POOL',
+    title: 'Launch Bulk Handover BTR Tower Pool',
+    category: 'Developer & BTR',
+    description: 'Create institutional Build-to-Rent tower pools with FIFO anti-cannibalization public queue caps.',
+    allowedRoles: ['DEVELOPER', 'ADMIN'],
+    recommendedTab: 'superhub',
+  },
+  {
+    action: 'RESERVE_DEVELOPER_FIFO',
+    title: 'Reserve Next FIFO Handover Unit at Floor Rent',
+    category: 'Developer & BTR',
+    description: 'Lock the next available unit in a developer BTR queue while preserving RERA floor rent valuation.',
+    allowedRoles: ['AGENT', 'DEVELOPER', 'ADMIN'],
+    recommendedTab: 'superhub',
+  },
+  {
+    action: 'POST_REVERSE_BRIEF',
+    title: 'Broadcast Pre-Qualified Tenant Reverse Brief',
+    category: 'Marketplace & Deals',
+    description: 'Publish UAE PASS & cheque-ready corporate tenant requirements for landlords to bid down on.',
+    allowedRoles: ['TENANT', 'AGENT', 'ADMIN'],
+    recommendedTab: 'superhub',
+  },
+  {
+    action: 'BID_REVERSE_BRIEF',
+    title: 'Bid Verified Unit on Tenant Reverse Auction',
+    category: 'Landlord & A2A',
+    description: 'Pitch a verified mandate at a competitive annual rent to win a pre-qualified corporate tenant.',
+    allowedRoles: ['LANDLORD', 'AGENT', 'ADMIN'],
+    recommendedTab: 'superhub',
+  },
+  {
+    action: 'GENERATE_GATE_PASS',
+    title: 'Issue Building OA Security Move-In QR Gate Pass',
+    category: 'Tenancy Shield',
+    description: 'Verify Ejari, DEWA & Chiller clearance and issue an automated security barrier QR pass for movers.',
+    allowedRoles: ['LANDLORD', 'AGENT', 'DEVELOPER', 'ADMIN'],
+    recommendedTab: 'superhub',
+  },
+  {
+    action: 'MANAGE_PDC_CHEQUES',
+    title: 'Manage PDC Cheque Vault & RNPL Bounce Shield',
+    category: 'Tenancy Shield',
+    description: 'Clear vaulted Post-Dated Cheques or convert upcoming cheques to 12x Monthly UAEDDS / RNPL split.',
+    allowedRoles: ['LANDLORD', 'AGENT', 'ADMIN'],
+    recommendedTab: 'shield',
+  },
+  {
+    action: 'SUBMIT_MAINTENANCE',
+    title: 'Log & Classify Maintenance Under UAE AED 500 Rule',
+    category: 'Tenancy Shield',
+    description: 'Auto-route minor wear (< AED 500) to Tenant and major MEP/structural repairs (≥ AED 500) to Landlord.',
+    allowedRoles: ['TENANT', 'LANDLORD', 'AGENT', 'ADMIN'],
+    recommendedTab: 'shield',
+  },
+  {
+    action: 'ADMIN_PLATFORM_CONTROL',
+    title: 'SWK Executive OS Bridge, Escrow & Audit Governance',
+    category: 'Executive & OS Bridge',
+    description: 'Manage External OS REST API & Webhooks, 1,000-User MVP cohort telemetry, and full 7-stage overrides.',
+    allowedRoles: ['ADMIN'],
+    recommendedTab: 'workflow',
+  },
+]
+
+export interface RoleLandingPortalConfig {
+  role: UserRole
+  badge: string
+  headline: string
+  subheadline: string
+  heroMetricLabel: string
+  heroMetricValue: string
+  primaryDemoEmail: string
+  secondaryDemoEmail?: string
+  defaultWorkspaceTab: 'marketplace' | 'superhub' | 'workflow' | 'shield' | 'partners' | 'role-portal'
+  pillars: {
+    title: string
+    desc: string
+  }[]
+}
+
+export const ROLE_LANDING_PORTALS: Record<UserRole, RoleLandingPortalConfig> = {
+  TENANT: {
+    role: 'TENANT',
+    badge: 'FOR VERIFIED TENANTS & NEW EXPATS',
+    headline: 'Zero Duplicate Ads. True Monthly All-In Cost. Legal Move-In on Day 1.',
+    subheadline:
+      'Every apartment is deduplicated by DLD Title Deed. See your real monthly outlay (including Empower/Tabreed Chiller, DEWA & 5% Municipality fee), pay in 12x Monthly UAEDDS installments, or use the 30-Day New Expat Bridge Pass while your Emirates ID clears.',
+    heroMetricLabel: 'Upfront Commission Saved (Direct Tier)',
+    heroMetricValue: 'Up to AED 6,251',
+    primaryDemoEmail: 'tenant@uaepass.ae',
+    secondaryDemoEmail: 'expat@swk.rent',
+    defaultWorkspaceTab: 'marketplace',
+    pillars: [
+      {
+        title: 'True Monthly All-In Cost Engine',
+        desc: 'Exposes Chiller, DEWA, 5% Municipality fee, refundable deposits, and exact cash needed to move in before you book.',
+      },
+      {
+        title: 'Flat AED 2,999 Direct Landlord Tier',
+        desc: 'Skip the traditional 5% broker fee on Direct Owner360 units while keeping full DLD Ejari & escrow protection.',
+      },
+      {
+        title: '30-Day New Expat Bridge-to-Ejari Pass',
+        desc: 'Move in legally on Day 1 with your Passport + Visa Application Receipt; auto-converts to 12-month Ejari once EID is issued.',
+      },
+      {
+        title: 'RERA Decree 43 & 90-Day Notice Shield',
+        desc: 'Automatically blocks illegal renewal rent hikes and late landlord notices (< 90 days before expiry).',
+      },
+    ],
+  },
+  LANDLORD: {
+    role: 'LANDLORD',
+    badge: 'FOR PROPERTY OWNERS & FAMILY OFFICES (OWNER360)',
+    headline: 'List via Title Deed for AED 0. Get 100% 1-Cheque Rent on Day 1.',
+    subheadline:
+      'Onboard your Dubai or Abu Dhabi property in 60 seconds with UAE PASS. Choose Tier 1 Direct Self-Serve (AED 0 Landlord Fee), Tier 2 Full Management, or Tier 3 Institutional 1-Cheque Upfront Payout while tenants pay monthly.',
+    heroMetricLabel: 'Landlord Listing & Marketing Fee',
+    heroMetricValue: 'AED 0 (100% Free)',
+    primaryDemoEmail: 'landlord@swk.rent',
+    secondaryDemoEmail: 'familyoffice@swk.rent',
+    defaultWorkspaceTab: 'partners',
+    pillars: [
+      {
+        title: 'Tier 1: AED 0 Landlord Fee Self-Serve',
+        desc: 'Verify your DLD Title Deed via UAE PASS and publish directly. The tenant pays a flat AED 2,999 platform fee.',
+      },
+      {
+        title: 'Tier 3: 1-Cheque Day-1 Upfront Payout',
+        desc: 'Receive 100% of your annual rent upfront on Day 1 while your tenant pays in 12x Monthly UAEDDS installments.',
+      },
+      {
+        title: 'Stage 3 Owner360 1-Click Offer Approval',
+        desc: 'Review UAE PASS verified corporate tenant profiles and sign off rental offers in 1 click from Web or Android.',
+      },
+      {
+        title: 'Article 16 Maintenance & PDC Bounce Shield',
+        desc: 'Automatically assigns minor wear (< AED 500) to tenants and prevents cheque bounces via RNPL monthly conversion.',
+      },
+    ],
+  },
+  AGENT: {
+    role: 'AGENT',
+    badge: 'FOR RERA BROKERS, SWK ADVISORS & A2A PARTNERS',
+    headline: 'Stop Burning AED 150k/yr on Portal Credits. Sync XML Feeds for AED 0.',
+    subheadline:
+      'Import your PropSpace, Propertybase, Bitrix24, or Pixxi CRM feed for AED 0 upfront. Lock protected 7-day A2A client registrations (50% Partner / 50% SWK Pool), dispatch keys with live Android GPS verification, and share 1-tap WhatsApp pitch decks.',
+    heroMetricLabel: 'Annual Portal Credit Spend Saved',
+    heroMetricValue: 'AED 84k – 163k/yr',
+    primaryDemoEmail: 'advisor@swk.rent',
+    secondaryDemoEmail: 'partner@apexcrest.ae',
+    defaultWorkspaceTab: 'superhub',
+    pillars: [
+      {
+        title: 'AED 0 Unlimited CRM XML Feed Sync',
+        desc: 'Zero listing slot fees, zero featured credit burn. Pay or split commission only when an Ejari lease closes.',
+      },
+      {
+        title: 'Protected 50/50 A2A Split Certificate',
+        desc: 'Register your buyer/tenant client with RERA ORN & BRN for a 7-day lead protection lock and automated split ledger.',
+      },
+      {
+        title: 'Native Android GPS Key-Vault Escort',
+        desc: 'Check out physical keys from the SWK Vault and run foreground GPS viewing verification on the Android app.',
+      },
+      {
+        title: '1-Tap Watermark-Free WhatsApp Pitch',
+        desc: 'Generate instant client deal sheets with True Monthly All-In Cost and your personal RERA BRN signature.',
+      },
+    ],
+  },
+  DEVELOPER: {
+    role: 'DEVELOPER',
+    badge: 'FOR DEVELOPERS & INSTITUTIONAL BTR OPERATORS',
+    headline: 'Prevent Handover Price Wars. Protect Tower Yields & Capital Valuation.',
+    subheadline:
+      'When 200 owners list identical handover apartments simultaneously on legacy portals, rents crash by 14%. Our FIFO Anti-Cannibalization Engine caps public exposure at 3 units per layout and enforces your RERA floor rent.',
+    heroMetricLabel: 'Tower Asset Valuation Protected',
+    heroMetricValue: '+AED 29.7M / Tower',
+    primaryDemoEmail: 'developer@selectgroup.ae',
+    defaultWorkspaceTab: 'superhub',
+    pillars: [
+      {
+        title: 'FIFO Anti-Cannibalization Queue',
+        desc: 'Displays at most 3 units per bedroom layout publicly and auto-releases the next unit in queue upon reservation.',
+      },
+      {
+        title: 'Protected RERA Floor Rent Guard',
+        desc: 'Prevents individual investors from undercutting building headline rents during bulk tower handovers.',
+      },
+      {
+        title: 'Pre-Handover DLP Snag-to-Lease',
+        desc: 'Complete 50-point snagging and pre-lease units before handover day for zero-day institutional vacancy.',
+      },
+      {
+        title: 'Automated Building OA Move-In Gate Pass',
+        desc: 'Issues QR security gate passes only after Ejari, DEWA, and Chiller deposits are cryptographically verified.',
+      },
+    ],
+  },
+  ADMIN: {
+    role: 'ADMIN',
+    badge: 'FOR SWK EXECUTIVE & COMPLIANCE DESK (ORN 51517)',
+    headline: 'Full 1,000-User MVP Governance, Escrow Guard & External OS REST API Bridge.',
+    subheadline:
+      'Monitor all 5 RBAC roles, override any stage of the 7-Stage UAE Rental Deal Pipeline, block personal bank account transfers, and synchronize inventory in real time with the External OS REST API & Webhook Bridge.',
+    heroMetricLabel: 'MVP Cohort & Compliance SLA',
+    heroMetricValue: '1,000 Users · 100% Audit',
+    primaryDemoEmail: 'admin@swk.rent',
+    defaultWorkspaceTab: 'workflow',
+    pillars: [
+      {
+        title: '7-Stage Deal Pipeline Master Control',
+        desc: 'Full visibility and executive sign-off across KYC, 48h Escrow Lock, Landlord Approval, Ejari, and Key Handover.',
+      },
+      {
+        title: 'Zero Personal Account Compliance Gate',
+        desc: 'Hard-blocks any offer or payment instruction referencing a sales advisor personal IBAN or unreceipted cash.',
+      },
+      {
+        title: 'External OS REST API & Webhook Bridge',
+        desc: 'Bi-directional REST sync (/api/os-api/*) with SWK Properties OS for inventory, key vault tags, and commission splits.',
+      },
+      {
+        title: 'Cryptographic Security & Audit Trail',
+        desc: 'scrypt password hashing, SHA-256 session tokens, brute-force lockout protection, and immutable SQLite WAL audit logs.',
+      },
+    ],
+  },
+}
+
+export interface UaeCommunityGuide {
+  id: string
+  name: string
+  emirate: EmirateName
+  tagline: string
+  image: string
+  avg1BrRentAed: number
+  avg2BrRentAed: number
+  difcCommuteMins: number
+  chillerProfile: string
+  metroAccess: string
+  verifiedUnitsCount: number
+}
+
+export const UAE_COMMUNITY_GUIDES: UaeCommunityGuide[] = [
+  {
+    id: 'dubai-marina',
+    name: 'Dubai Marina',
+    emirate: 'Dubai',
+    tagline: 'Waterfront Luxury · Direct Marina Walk & Tram Access',
+    image: '/media/communities/dubai-marina.webp',
+    avg1BrRentAed: 125000,
+    avg2BrRentAed: 178000,
+    difcCommuteMins: 22,
+    chillerProfile: 'Chiller Free (Select Group / Emaar Towers)',
+    metroAccess: 'Sobha Realty & DMCC Metro (4 mins)',
+    verifiedUnitsCount: 14,
+  },
+  {
+    id: 'downtown-dubai',
+    name: 'Downtown Dubai',
+    emirate: 'Dubai',
+    tagline: 'Burj Khalifa District · AC Skybridge to Dubai Mall & Metro',
+    image: '/media/communities/downtown-dubai.webp',
+    avg1BrRentAed: 140000,
+    avg2BrRentAed: 185000,
+    difcCommuteMins: 6,
+    chillerProfile: 'Chiller Free (Emaar District Cooling Included)',
+    metroAccess: 'Burj Khalifa / Dubai Mall Metro (5 mins)',
+    verifiedUnitsCount: 11,
+  },
+  {
+    id: 'business-bay',
+    name: 'Business Bay',
+    emirate: 'Dubai',
+    tagline: 'Dubai Canal Corporate Hub · 8 Mins to DIFC Gate Village',
+    image: '/media/communities/business-bay.webp',
+    avg1BrRentAed: 105000,
+    avg2BrRentAed: 135000,
+    difcCommuteMins: 8,
+    chillerProfile: 'Empower / Chiller Free BTR Options',
+    metroAccess: 'Business Bay Metro Station (5 mins)',
+    verifiedUnitsCount: 19,
+  },
+  {
+    id: 'dubai-hills-estate',
+    name: 'Dubai Hills Estate',
+    emirate: 'Dubai',
+    tagline: '18-Hole Championship Golf & Central Park Family Sanctuary',
+    image: '/media/communities/dubai-hills-estate.webp',
+    avg1BrRentAed: 102000,
+    avg2BrRentAed: 138000,
+    difcCommuteMins: 17,
+    chillerProfile: 'Chiller Free (Park Heights & Collective)',
+    metroAccess: 'Equiti Metro Express Bus Link',
+    verifiedUnitsCount: 16,
+  },
+  {
+    id: 'jvc',
+    name: 'JVC (Jumeirah Village Circle)',
+    emirate: 'Dubai',
+    tagline: 'Smart Resort Low-Rise Towers · Fast Al Khail Exit (District 11)',
+    image: '/media/communities/jvc.webp',
+    avg1BrRentAed: 76000,
+    avg2BrRentAed: 108000,
+    difcCommuteMins: 24,
+    chillerProfile: '100% Chiller Free (DEWA Only)',
+    metroAccess: 'DIC Metro Feeder Route J01',
+    verifiedUnitsCount: 22,
+  },
+  {
+    id: 'dubai-creek-harbour',
+    name: 'Dubai Creek Harbour',
+    emirate: 'Dubai',
+    tagline: 'Island Waterfront Promenade & Ras Al Khor Sanctuary Views',
+    image: '/media/communities/dubai-creek-harbour.webp',
+    avg1BrRentAed: 118000,
+    avg2BrRentAed: 168000,
+    difcCommuteMins: 14,
+    chillerProfile: 'Chiller Free Emaar Island Towers',
+    metroAccess: 'Creek Metro & Marine Ferry',
+    verifiedUnitsCount: 12,
+  },
+  {
+    id: 'palm-jumeirah',
+    name: 'Palm Jumeirah & Al Reem (AUH)',
+    emirate: 'Abu Dhabi',
+    tagline: 'Beachfront & ADGM Financial Island Executive Residences',
+    image: '/media/communities/palm-jumeirah.webp',
+    avg1BrRentAed: 82000,
+    avg2BrRentAed: 145000,
+    difcCommuteMins: 25,
+    chillerProfile: 'Tabreed / Nakheel District Cooling',
+    metroAccess: 'Palm Monorail & Shams Transit Hub',
+    verifiedUnitsCount: 9,
+  },
+  {
+    id: 'sheikh-zayed-road',
+    name: 'DIFC & Sheikh Zayed Corridor',
+    emirate: 'Dubai',
+    tagline: 'Walk-to-Desk Financial Center & Museum of the Future View',
+    image: '/media/communities/sheikh-zayed-road.webp',
+    avg1BrRentAed: 132000,
+    avg2BrRentAed: 190000,
+    difcCommuteMins: 3,
+    chillerProfile: 'Chiller Free / Empower Corporate Towers',
+    metroAccess: 'Financial Centre & Emirates Towers Metro (2 mins)',
+    verifiedUnitsCount: 8,
+  },
+]
+
+export interface FieldDutySession {
+  id: number
+  sessionCode: string
+  agentName: string
+  agentEmail: string
+  agentRole: UserRole
+  unitId: number
+  unitCode: string
+  assignedLocation: string
+  keyVaultTag: string
+  deviceId: string
+  batteryPct: number
+  networkType: string
+  lastLat: number
+  lastLng: number
+  accuracyM: number
+  pointsCount: number
+  status: 'ACTIVE_GPS_ESCORT' | 'COMPLETED_VERIFIED'
+  startedAt: string
+  updatedAt: string
+}
+

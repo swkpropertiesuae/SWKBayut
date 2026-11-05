@@ -20,4 +20,4 @@ fs.rmSync(destDir, { recursive: true, force: true })
 fs.mkdirSync(destDir, { recursive: true })
 fs.cpSync(srcDir, destDir, { recursive: true })
 
-console.log('✓ Synced SWK ONE web bundle into android/app/src/main/assets/public')
+console.log('✓ Synced SWK Rent (ae.swk.rent) web bundle into android/app/src/main/assets/public')

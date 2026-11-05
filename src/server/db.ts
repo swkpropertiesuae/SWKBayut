@@ -11,6 +11,7 @@ import {
   type ChequeOption,
   type UserCustomUsageProfile,
   type RentalDealWorkflow,
+  type FieldDutySession,
   evaluateReraRenewal,
   classifyMaintenanceResponsibility,
   calculateDeveloperBtrYieldProtection,
@@ -390,7 +391,43 @@ export function initSchemaAndSeed() {
     CREATE INDEX IF NOT EXISTS idx_units_building ON rental_units(building_id);
     CREATE INDEX IF NOT EXISTS idx_workflows_stage ON rental_workflows(current_stage);
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS field_duty_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_code TEXT NOT NULL UNIQUE,
+      agent_name TEXT NOT NULL,
+      agent_email TEXT NOT NULL,
+      agent_role TEXT NOT NULL,
+      unit_id INTEGER NOT NULL,
+      unit_code TEXT NOT NULL,
+      assigned_location TEXT NOT NULL,
+      key_vault_tag TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      battery_pct INTEGER NOT NULL DEFAULT 94,
+      network_type TEXT NOT NULL DEFAULT '5G / Wi-Fi',
+      last_lat REAL NOT NULL DEFAULT 25.0805,
+      last_lng REAL NOT NULL DEFAULT 55.1403,
+      accuracy_m REAL NOT NULL DEFAULT 4.2,
+      points_count INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'ACTIVE_GPS_ESCORT',
+      started_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `)
+
+  // Seed Android Field-Duty GPS Viewing Escort Sessions if empty
+  const dutyCount = (db.prepare('SELECT COUNT(*) as c FROM field_duty_sessions').get() as { c: number }).c
+  if (dutyCount === 0) {
+    db.prepare(`
+      INSERT INTO field_duty_sessions (
+        session_code, agent_name, agent_email, agent_role, unit_id, unit_code,
+        assigned_location, key_vault_tag, device_id, battery_pct, network_type,
+        last_lat, last_lng, accuracy_m, points_count, status, started_at, updated_at
+      ) VALUES
+        ('DUTY-AND-401', 'Mohammad Haseeb', 'advisor@swk.rent', 'AGENT', 1, 'SWK-RENT-101', 'Marina Gate I · Unit #3402 (Dubai Marina)', 'SWK-KEY-MG1-3402', 'SWK-AND-S24ULTRA-58912', 94, '5G Standalone', 25.0889, 55.1462, 3.8, 12, 'ACTIVE_GPS_ESCORT', '2026-11-04T03:45:00Z', '2026-11-04T04:12:00Z'),
+        ('DUTY-AND-402', 'Omar Farooq (A2A)', 'partner@apexcrest.ae', 'AGENT', 4, 'SWK-RENT-104', 'Park Heights I · Unit #1108 (Dubai Hills)', 'SWK-KEY-PH1-1108', 'SWK-AND-PIXEL9PRO-49182', 88, 'Wi-Fi 6E', 25.1045, 55.2418, 4.5, 19, 'COMPLETED_VERIFIED', '2026-11-03T11:30:00Z', '2026-11-03T12:25:00Z')
+    `).run()
+  }
 
   // Seed External OS REST API Configuration & Initial Sync Log
   const osCfgCount = (db.prepare('SELECT COUNT(*) as c FROM os_api_config').get() as { c: number }).c
@@ -2183,4 +2220,29 @@ export function getMvpLaunchTelemetry() {
     iosBundleReady: true,
     recentAuditLogs,
   }
+}
+
+export function listFieldDutySessions(): FieldDutySession[] {
+  const rows = db.prepare('SELECT * FROM field_duty_sessions ORDER BY id DESC').all() as any[]
+  return rows.map(r => ({
+    id: r.id,
+    sessionCode: r.session_code,
+    agentName: r.agent_name,
+    agentEmail: r.agent_email,
+    agentRole: r.agent_role as UserRole,
+    unitId: r.unit_id,
+    unitCode: r.unit_code,
+    assignedLocation: r.assigned_location,
+    keyVaultTag: r.key_vault_tag,
+    deviceId: r.device_id,
+    batteryPct: r.battery_pct,
+    networkType: r.network_type,
+    lastLat: r.last_lat,
+    lastLng: r.last_lng,
+    accuracyM: r.accuracy_m,
+    pointsCount: r.points_count,
+    status: r.status,
+    startedAt: r.started_at,
+    updatedAt: r.updated_at,
+  }))
 }

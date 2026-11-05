@@ -443,6 +443,86 @@ async function runTests() {
     assert.ok(trackCuRes.json().customUsage.whatsappPitchesGenerated >= 3)
   })
 
+  // 20. Flagship Public Landing Page & 5-Role Landing Portals Endpoint
+  const landingRes = await app.inject({ method: 'GET', url: '/api/landing' })
+  check('GET /api/landing returns 5 Role Landing Portals, 8 UAE Community Guides, and Android/iOS package IDs', () => {
+    assert.equal(landingRes.statusCode, 200)
+    const lBody = landingRes.json()
+    assert.equal(lBody.androidPackage, 'ae.swk.rent')
+    assert.equal(Object.keys(lBody.roleLandingPortals).length, 5)
+    assert.equal(lBody.communityGuides.length, 8)
+    assert.ok(lBody.featuredUnits.length >= 3)
+  })
+
+  // 21. 14-Action RBAC Permission Matrix Endpoint Across Roles
+  const rbacTenantRes = await app.inject({
+    method: 'GET',
+    url: '/api/rbac/matrix',
+    headers: { 'x-swk-role': 'TENANT' },
+  })
+  const rbacAdminRes = await app.inject({
+    method: 'GET',
+    url: '/api/rbac/matrix',
+    headers: { 'x-swk-role': 'ADMIN' },
+  })
+  check('GET /api/rbac/matrix evaluates 14 RBAC actions & 7 workflow stages per active role', () => {
+    assert.equal(rbacTenantRes.statusCode, 200)
+    assert.equal(rbacAdminRes.statusCode, 200)
+    const tenantActions = rbacTenantRes.json().actionCatalog as any[]
+    const adminActions = rbacAdminRes.json().actionCatalog as any[]
+    assert.equal(tenantActions.length, 14)
+    assert.equal(adminActions.filter(a => a.grantedForActiveRole).length, 14)
+    const tenantCanCreateDevPool = tenantActions.find(a => a.action === 'CREATE_DEVELOPER_POOL')?.grantedForActiveRole
+    assert.equal(tenantCanCreateDevPool, false)
+  })
+
+  // 22. Native Android Foreground GPS Viewing Escort Lifecycle (RBAC + Location Batch + End)
+  const dutyTenantBlockRes = await app.inject({
+    method: 'POST',
+    url: '/api/field-duty/start',
+    headers: { 'x-swk-role': 'TENANT' },
+    payload: { unitId: 1 },
+  })
+  const dutyStartRes = await app.inject({
+    method: 'POST',
+    url: '/api/field-duty/start',
+    headers: { 'x-swk-session': agentToken },
+    payload: {
+      unitId: 1,
+      assignedLocation: 'Marina Gate I · Unit #3402',
+      deviceId: 'SWK-AND-S24ULTRA-TEST',
+      batteryPct: 95,
+      networkType: '5G Standalone',
+    },
+  })
+  const dutySessionId = dutyStartRes.json().session?.id as number
+  const dutyBatchRes = await app.inject({
+    method: 'POST',
+    url: `/api/swk-one/field-duty/${dutySessionId}/location-batch`,
+    payload: {
+      device_id: 'SWK-AND-S24ULTRA-TEST',
+      battery_pct: 93,
+      network_type: '5G Standalone',
+      points: [
+        { lat: 25.0891, lng: 55.1465, accuracy_m: 3.2 },
+        { lat: 25.0893, lng: 55.1467, accuracy_m: 3.1 },
+      ],
+    },
+  })
+  const dutyEndRes = await app.inject({
+    method: 'POST',
+    url: `/api/swk-one/field-duty/${dutySessionId}/end`,
+    payload: {},
+  })
+  check('Android Field-Duty GPS Viewing Escort blocks TENANT (403) and completes start -> location-batch -> end for AGENT', () => {
+    assert.equal(dutyTenantBlockRes.statusCode, 403)
+    assert.equal(dutyStartRes.statusCode, 200)
+    assert.equal(dutyBatchRes.statusCode, 200)
+    assert.equal(dutyBatchRes.json().session.pointsCount, 3)
+    assert.equal(dutyEndRes.statusCode, 200)
+    assert.equal(dutyEndRes.json().session.status, 'COMPLETED_VERIFIED')
+  })
+
   await app.close()
   console.log(`\nALL ${passed}/${passed} SWK.RENT UAE RENTAL PLATFORM, OS REST API, RBAC, 8 DEMO ACCOUNTS & CUSTOM USAGE CHECKS PASSED!`)
 }

@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- SWK ONE "Midnight & Champagne" -->
-    <color name="swk_midnight">#08142A</color>
-    <color name="swk_midnight_raised">#0B1A33</color>
-    <color name="swk_royal">#14305C</color>
-    <color name="swk_champagne">#C9A96E</color>
+    <!-- SWK Rent (ae.swk.rent) "Obsidian & Matte Gold" Brand Palette -->
+    <color name="swk_midnight">#17191C</color>
+    <color name="swk_midnight_raised">#22262B</color>
+    <color name="swk_royal">#2C313A</color>
+    <color name="swk_champagne">#B89040</color>
+    <color name="swk_gold_bright">#D6B46C</color>
 </resources>

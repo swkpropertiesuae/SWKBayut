@@ -41,6 +41,7 @@ import {
   type UserRole,
   type AuthUser,
   type RentalDealWorkflow,
+  type FieldDutySession,
   PERMITTED_UAE_RENTAL_PAYMENT_CHANNELS,
   ROLE_CAPABILITIES,
   UAE_RENTAL_WORKFLOW_STAGES,
@@ -49,8 +50,14 @@ import {
   calculateTrueRentalCost,
   evaluateReraRenewal,
 } from '@shared/uae-rental-rules'
+import { smartFetchResponse } from './api-fallback'
+import {
+  LandingPortalView,
+  RoleAccessCommandCenter,
+  type NavTabId,
+} from './LandingAndRolePortals'
 
-type ActiveTab = 'marketplace' | 'buildings' | 'superhub' | 'workflow' | 'shield' | 'partners' | 'auth'
+type ActiveTab = NavTabId
 
 const aed = (n: number) => `AED ${Math.round(n || 0).toLocaleString('en-US')}`
 
@@ -150,8 +157,16 @@ const SUPPLY_BADGES: Record<
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('marketplace')
+  const [activeTab, setActiveTab] = useState<ActiveTab>('landing')
   const [loading, setLoading] = useState(true)
+  const [androidServerUrl, setAndroidServerUrl] = useState<string>(() => {
+    try {
+      const w = window as any
+      return w.SwkAndroidBridge?.getServerUrl?.() || w.SwkAndroidBridge?.getDefaultServerUrl?.() || ''
+    } catch {
+      return ''
+    }
+  })
   const [data, setData] = useState<{
     currentUser: AuthUser | null
     demoUsers: AuthUser[]
@@ -170,6 +185,7 @@ export default function App() {
     reverseBriefs: VerifiedTenantBrief[]
     crmFeeds: any[]
     gatePasses: any[]
+    fieldDutySessions?: FieldDutySession[]
     osBridge: any
   } | null>(null)
 
@@ -360,18 +376,25 @@ export default function App() {
   }
 
   const apiFetch = async (url: string, init?: RequestInit) => {
-    const headers = new Headers(init?.headers || {})
-    if (sessionToken) headers.set('x-swk-session', sessionToken)
-    headers.set('x-swk-role', currentUser?.role ?? activeRole)
-    return fetch(url, { ...init, headers })
+    return smartFetchResponse(
+      url,
+      init,
+      sessionToken,
+      currentUser?.role ?? activeRole,
+      androidServerUrl,
+    )
   }
 
   const refreshData = async (overrideToken?: string | null) => {
     try {
-      const headers: Record<string, string> = {}
       const tok = overrideToken !== undefined ? overrideToken : sessionToken
-      if (tok) headers['x-swk-session'] = tok
-      const res = await fetch('/api/bootstrap', { headers })
+      const res = await smartFetchResponse(
+        '/api/bootstrap',
+        undefined,
+        tok,
+        currentUser?.role ?? activeRole,
+        androidServerUrl,
+      )
       const json = await res.json()
       setData(json)
       if (json.currentUser) {
@@ -391,6 +414,17 @@ export default function App() {
 
   useEffect(() => {
     void refreshData()
+    const onBioResult = (ev: Event) => {
+      const detail = (ev as CustomEvent)?.detail
+      if (detail?.verified) {
+        showNotice('ok', `Android Biometric Unlock Verified (${detail.method || 'BiometricPrompt'})!`)
+        void handleUaePassLogin()
+      } else {
+        showNotice('err', 'Android Biometric verification cancelled or unavailable.')
+      }
+    }
+    window.addEventListener('swk:biometric-result', onBioResult)
+    return () => window.removeEventListener('swk:biometric-result', onBioResult)
   }, [])
 
   const buildingsById = useMemo(() => {
@@ -495,7 +529,7 @@ export default function App() {
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: loginEmail, password: loginPassword }),
@@ -523,7 +557,7 @@ export default function App() {
   const handleDemoAccountLogin = async (email: string) => {
     setLoginEmail(email)
     setLoginPassword('SwkRent2026!')
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ demoEmail: email }),
@@ -549,7 +583,7 @@ export default function App() {
   }
 
   const handleUaePassLogin = async (email?: string) => {
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uaePassQuickAuth: true, email: email || loginEmail }),
@@ -575,7 +609,7 @@ export default function App() {
   }
 
   const handleQuickRoleSwitch = async (role: UserRole) => {
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ demoQuickRole: role }),
@@ -602,7 +636,7 @@ export default function App() {
 
   const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const res = await fetch('/api/auth/signup', {
+    const res = await apiFetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -647,6 +681,127 @@ export default function App() {
       `Welcome to swk.rent MVP Cohort, ${json.user.fullName} (${json.user.role}) — Custom Usage Profile Connected!`,
     )
     await refreshData(json.sessionToken)
+  }
+
+  const handleTriggerBiometricSignIn = () => {
+    try {
+      const w = window as any
+      if (w.SwkAndroidBridge?.promptBiometricUnlock) {
+        w.SwkAndroidBridge.promptBiometricUnlock(
+          'Verify UAE PASS & SWK Rent Biometric Identity (ORN 51517)',
+        )
+        return
+      }
+    } catch {}
+    void handleUaePassLogin()
+  }
+
+  const handleSaveAndroidServerUrl = (url: string) => {
+    setAndroidServerUrl(url)
+    try {
+      const w = window as any
+      if (w.SwkAndroidBridge?.setServerUrl) {
+        w.SwkAndroidBridge.setServerUrl(url)
+      }
+    } catch {}
+    showNotice(
+      'ok',
+      `Android Hybrid Server Endpoint updated to ${url || 'Bundled Local Full-Stack Engine'}.`,
+    )
+  }
+
+  const handleStartFieldDuty = async (
+    unitId: number,
+    deviceId: string,
+    batteryPct: number,
+    networkType: string,
+  ) => {
+    const unit = (data?.units ?? []).find(u => u.id === unitId)
+    const assignedLocation = unit
+      ? `${unit.buildingName} · Unit #${unit.unitNo} (${unit.community})`
+      : 'Marina Gate I · Unit #3402'
+    const res = await apiFetch('/api/field-duty/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        unitId,
+        assignedLocation,
+        deviceId,
+        batteryPct,
+        networkType,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice(
+        'err',
+        json.error || 'RBAC: Only RERA Agent or SWK Admin can start GPS Viewing Escort sessions.',
+      )
+      return
+    }
+    try {
+      const w = window as any
+      if (w.SwkAndroidBridge?.startDutyLocationService && json.session?.id) {
+        w.SwkAndroidBridge.startDutyLocationService(
+          JSON.stringify({
+            sessionId: json.session.id,
+            assignedLocation,
+            serverUrl: androidServerUrl || 'https://swk.rent',
+            sessionToken: sessionToken || 'swk_native_token',
+            deviceId,
+          }),
+        )
+      }
+    } catch {}
+    showNotice(
+      'ok',
+      `Android Foreground GPS Viewing Escort (${json.session?.sessionCode}) started for ${assignedLocation}!`,
+    )
+    await refreshData()
+  }
+
+  const handlePingFieldDutyBatch = async (sessionId: number) => {
+    const res = await apiFetch(`/api/field-duty/${sessionId}/location-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        points: [
+          {
+            lat: 25.0889 + (Math.random() - 0.5) * 0.002,
+            lng: 55.1462 + (Math.random() - 0.5) * 0.002,
+            accuracy_m: Number((2.8 + Math.random() * 1.5).toFixed(1)),
+          },
+        ],
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not update GPS telemetry batch')
+      return
+    }
+    showNotice('ok', `GPS Fix recorded for ${json.session?.sessionCode} (${json.session?.pointsCount} verified points).`)
+    await refreshData()
+  }
+
+  const handleEndFieldDuty = async (sessionId: number) => {
+    const res = await apiFetch(`/api/field-duty/${sessionId}/end`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      showNotice('err', json.error || 'Could not complete GPS viewing escort')
+      return
+    }
+    try {
+      const w = window as any
+      if (w.SwkAndroidBridge?.stopDutyLocationService) {
+        w.SwkAndroidBridge.stopDutyLocationService()
+      }
+    } catch {}
+    showNotice('ok', `GPS Viewing Escort ${json.session?.sessionCode} verified & key returned to SWK Vault!`)
+    await refreshData()
   }
 
   const handleSaveCustomUsage = async (e: React.FormEvent) => {
@@ -1142,8 +1297,30 @@ export default function App() {
             </div>
           </div>
 
-          {/* Desktop 6-Module Switcher */}
-          <nav className="hidden md:flex flex-wrap items-center gap-1.5 bg-[#22262B] p-1.5 rounded-xl border border-white/10">
+          {/* Desktop 9-Module Switcher (Landing, RBAC, Marketplace, Towers, Hub, Workflow, Shield, Partners, Auth) */}
+          <nav className="hidden md:flex flex-wrap items-center gap-1 bg-[#22262B] p-1.5 rounded-xl border border-white/10">
+            <button
+              onClick={() => setActiveTab('landing')}
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                activeTab === 'landing'
+                  ? 'swk-gold-gradient text-[#17191C] shadow'
+                  : 'text-[#D6B46C] hover:text-white bg-[#B89040]/15 border border-[#D6B46C]/40'
+              }`}
+            >
+              <Compass size={14} />
+              Landing & Portals
+            </button>
+            <button
+              onClick={() => setActiveTab('role-portal')}
+              className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                activeTab === 'role-portal'
+                  ? 'swk-gold-gradient text-[#17191C] shadow'
+                  : 'text-emerald-300 hover:text-white bg-emerald-500/15 border border-emerald-400/40'
+              }`}
+            >
+              <ShieldCheck size={14} />
+              Role Access & RBAC
+            </button>
             <button
               onClick={() => setActiveTab('marketplace')}
               className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
@@ -1153,7 +1330,7 @@ export default function App() {
               }`}
             >
               <Search size={14} />
-              1. Marketplace
+              Marketplace
             </button>
             <button
               onClick={() => setActiveTab('buildings')}
@@ -1164,7 +1341,7 @@ export default function App() {
               }`}
             >
               <Building2 size={14} />
-              2. Towers
+              Towers
             </button>
             <button
               onClick={() => setActiveTab('superhub')}
@@ -1175,7 +1352,7 @@ export default function App() {
               }`}
             >
               <Rocket size={14} />
-              3. Agent & Dev Hub
+              Agent & Dev Hub
             </button>
             <button
               onClick={() => setActiveTab('workflow')}
@@ -1186,7 +1363,7 @@ export default function App() {
               }`}
             >
               <Layers size={14} />
-              4. 7-Stage Workflow & MVP
+              7-Stage Deal OS
             </button>
             <button
               onClick={() => setActiveTab('shield')}
@@ -1197,7 +1374,7 @@ export default function App() {
               }`}
             >
               <ShieldCheck size={14} />
-              5. RERA Shield
+              RERA Shield
             </button>
             <button
               onClick={() => setActiveTab('partners')}
@@ -1208,7 +1385,7 @@ export default function App() {
               }`}
             >
               <Handshake size={14} />
-              6. Landlords & A2A
+              Owner360 & A2A
             </button>
             <button
               onClick={() => setActiveTab('auth')}
@@ -1219,7 +1396,7 @@ export default function App() {
               }`}
             >
               <KeyRound size={14} />
-              7. Sign In / Register & Demo Hub
+              Sign In & Demo
             </button>
           </nav>
         </div>
@@ -1321,14 +1498,15 @@ export default function App() {
       </header>
 
       {/* Mobile Bottom Navigation Bar (100% Mobile-Friendly Interface) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#17191C] text-white border-t border-[#B89040]/40 grid grid-cols-7 py-1.5 px-1 shadow-2xl">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#17191C] text-white border-t border-[#B89040]/40 grid grid-cols-8 py-1.5 px-1 shadow-2xl">
         {(
           [
+            { id: 'landing', label: 'Landing', icon: Compass },
+            { id: 'role-portal', label: 'RBAC', icon: ShieldCheck },
             { id: 'marketplace', label: 'Rentals', icon: Search },
             { id: 'buildings', label: 'Towers', icon: Building2 },
             { id: 'superhub', label: 'Agent/Dev', icon: Rocket },
             { id: 'workflow', label: 'Workflow', icon: Layers },
-            { id: 'shield', label: 'Shield', icon: ShieldCheck },
             { id: 'partners', label: 'A2A/Owner', icon: Handshake },
             { id: 'auth', label: 'Sign In', icon: KeyRound },
           ] as const
@@ -1398,6 +1576,13 @@ export default function App() {
 
           <div className="flex flex-wrap items-center gap-1.5">
             <button
+              onClick={() => setActiveTab('role-portal')}
+              className="px-3 py-1.5 rounded-xl bg-[#17625F] text-white font-extrabold text-[11px] hover:bg-[#124e4b] transition flex items-center gap-1.5"
+            >
+              <ShieldCheck size={13} />
+              Role Access & RBAC Matrix
+            </button>
+            <button
               onClick={() => {
                 setAuthMode('signin')
                 setActiveTab('auth')
@@ -1418,6 +1603,59 @@ export default function App() {
             </button>
           </div>
         </section>
+
+        {/* ============================================================
+            MODULE 0A: FLAGSHIP PUBLIC LANDING PAGE & 5-ROLE PORTALS
+           ============================================================ */}
+        {activeTab === 'landing' && (
+          <LandingPortalView
+            effectiveRole={effectiveRole}
+            currentUser={currentUser}
+            units={data?.units ?? []}
+            buildings={data?.buildings ?? []}
+            chequeMode={chequeMode}
+            onNavigateTab={tab => setActiveTab(tab)}
+            onSelectRoleAndNavigate={(role, targetTab) => {
+              void handleQuickRoleSwitch(role)
+              setActiveTab(targetTab)
+            }}
+            onFilterCommunity={(communityKeyword, emirate) => {
+              setSearchQuery(communityKeyword)
+              setSelectedEmirate(emirate)
+              setActiveTab('marketplace')
+            }}
+            onOpenOfferModal={openOfferModal}
+            onOpenViewingModal={u => setViewingModalUnit(u)}
+            onOpenAuthModal={mode => {
+              setAuthMode(mode)
+              setAuthModalOpen(true)
+            }}
+          />
+        )}
+
+        {/* ============================================================
+            MODULE 0B: 5-ROLE ACCESS CONTROL (RBAC) & NATIVE ANDROID COMMAND CENTER
+           ============================================================ */}
+        {activeTab === 'role-portal' && (
+          <RoleAccessCommandCenter
+            effectiveRole={effectiveRole}
+            currentUser={currentUser}
+            demoUsers={data?.demoUsers ?? []}
+            units={data?.units ?? []}
+            fieldDutySessions={data?.fieldDutySessions ?? []}
+            appIconVariant={appIconVariant}
+            onQuickRoleSwitch={role => void handleQuickRoleSwitch(role)}
+            onDemoAccountLogin={email => void handleDemoAccountLogin(email)}
+            onNavigateTab={tab => setActiveTab(tab)}
+            onSwitchAppIconVariant={handleSwitchAppIconVariant}
+            onStartFieldDuty={handleStartFieldDuty}
+            onPingFieldDutyBatch={handlePingFieldDutyBatch}
+            onEndFieldDuty={handleEndFieldDuty}
+            onTriggerBiometricSignIn={handleTriggerBiometricSignIn}
+            serverUrl={androidServerUrl}
+            onSaveServerUrl={handleSaveAndroidServerUrl}
+          />
+        )}
 
         {/* ============================================================
             MODULE 1: PUBLIC VERIFIED RENTAL MARKETPLACE & TRUE COST ENGINE
@@ -4510,6 +4748,24 @@ export default function App() {
                   >
                     Sign In with Encrypted Session
                   </button>
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleUaePassLogin()}
+                      className="py-2.5 px-3 rounded-xl bg-[#17625F] text-white font-extrabold text-xs shadow flex items-center justify-center gap-1.5"
+                    >
+                      <BadgeCheck size={14} />
+                      1-Tap UAE PASS Sign-In
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTriggerBiometricSignIn}
+                      className="py-2.5 px-3 rounded-xl bg-[#17191C] text-[#D6B46C] border border-[#B89040] font-extrabold text-xs shadow flex items-center justify-center gap-1.5"
+                    >
+                      <Smartphone size={14} />
+                      Android Biometric Unlock
+                    </button>
+                  </div>
                 </form>
 
                 <div className="pt-3 border-t border-gray-200 space-y-2">

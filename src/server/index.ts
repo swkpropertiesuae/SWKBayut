@@ -21,6 +21,7 @@ import {
   getUserCustomUsage,
   upsertUserCustomUsage,
   incrementUserUsageMetric,
+  listFieldDutySessions,
 } from './db'
 import {
   hashPassword,
@@ -43,6 +44,9 @@ import {
   type AuthUser,
   type RbacAction,
   ROLE_CAPABILITIES,
+  RBAC_ACTION_CATALOG,
+  ROLE_LANDING_PORTALS,
+  UAE_COMMUNITY_GUIDES,
   UAE_RENTAL_WORKFLOW_STAGES,
   canRoleExecuteAction,
   canRoleAdvanceWorkflowStage,
@@ -521,10 +525,14 @@ export function buildServer() {
     const workflows = listRentalWorkflows()
     const demoUsers = listUsersPublic()
     const mvpTelemetry = getMvpLaunchTelemetry()
+    const fieldDutySessions = listFieldDutySessions()
 
     return {
       currentUser,
       roleCapabilities: ROLE_CAPABILITIES,
+      rbacActionCatalog: RBAC_ACTION_CATALOG,
+      roleLandingPortals: ROLE_LANDING_PORTALS,
+      communityGuides: UAE_COMMUNITY_GUIDES,
       workflowStageDefinitions: UAE_RENTAL_WORKFLOW_STAGES,
       demoUsers,
       mvpTelemetry,
@@ -542,6 +550,7 @@ export function buildServer() {
       crmFeeds,
       gatePasses,
       workflows,
+      fieldDutySessions,
       portalSavingsSample: calculatePortalSavingsVsCompetitors({
         activeListingsCount: 45,
         agentsCount: 15,
@@ -549,6 +558,182 @@ export function buildServer() {
       osBridge: getOsApiStatus(),
     }
   })
+
+  // ------------------------------------------------------------------
+  // PUBLIC LANDING PAGE, RBAC MATRIX & NATIVE ANDROID FIELD-DUTY GPS
+  // ------------------------------------------------------------------
+  app.get('/api/landing', async () => {
+    const units = listRentalUnits()
+    const buildings = listBuildings()
+    return {
+      ok: true,
+      domain: 'https://swk.rent',
+      reraOrn: '51517',
+      androidPackage: 'ae.swk.rent',
+      iosBundleId: 'ae.swk.rent',
+      heroStats: {
+        verifiedUnitsCount: units.length,
+        canonicalTowersCount: buildings.length,
+        brokerListingCostAed: 0,
+        directLandlordFlatFeeAed: 2999,
+        mvpCohortSlotsTotal: 1000,
+      },
+      roleLandingPortals: ROLE_LANDING_PORTALS,
+      communityGuides: UAE_COMMUNITY_GUIDES,
+      featuredUnits: units.slice(0, 3),
+    }
+  })
+
+  app.get('/api/rbac/matrix', async (req) => {
+    const user = resolveRequestUser(req)
+    const explicitRole = req.headers['x-swk-role'] as UserRole | undefined
+    const activeRole: UserRole = user?.role ?? explicitRole ?? 'TENANT'
+    return {
+      ok: true,
+      activeRole,
+      currentUser: user,
+      roleCapabilities: ROLE_CAPABILITIES,
+      actionCatalog: RBAC_ACTION_CATALOG.map(item => ({
+        ...item,
+        grantedForActiveRole: item.allowedRoles.includes(activeRole),
+      })),
+      workflowStages: UAE_RENTAL_WORKFLOW_STAGES.map(st => ({
+        ...st,
+        grantedForActiveRole: st.allowedRolesToAdvance.includes(activeRole),
+      })),
+    }
+  })
+
+  app.get('/api/field-duty', async () => ({
+    ok: true,
+    sessions: listFieldDutySessions(),
+  }))
+
+  app.post('/api/field-duty/start', async (req, reply) => {
+    const { allowed, user } = checkRbacPermission(req, reply, 'BOOK_VIEWING')
+    if (!allowed) return
+
+    const explicitRole = req.headers['x-swk-role'] as UserRole | undefined
+    const effectiveRole: UserRole = user?.role ?? explicitRole ?? 'AGENT'
+    if (effectiveRole !== 'AGENT' && effectiveRole !== 'ADMIN') {
+      return reply.code(403).send({
+        error: `RBAC Access Denied: Live GPS Key-Vault Viewing Escort requires role "AGENT" or "ADMIN" (current: "${effectiveRole}").`,
+      })
+    }
+
+    const body = (req.body ?? {}) as {
+      unitId?: number
+      assignedLocation?: string
+      deviceId?: string
+      batteryPct?: number
+      networkType?: string
+    }
+    const units = listRentalUnits()
+    const unit = units.find(u => u.id === Number(body.unitId)) ?? units[0]!
+    const now = new Date().toISOString()
+    const sessionCode = `DUTY-AND-${Math.floor(100 + Math.random() * 900)}`
+    const locationLabel =
+      body.assignedLocation?.trim() || `${unit.buildingName} · Unit #${unit.unitNo} (${unit.community})`
+
+    const info = db
+      .prepare(`
+        INSERT INTO field_duty_sessions (
+          session_code, agent_name, agent_email, agent_role, unit_id, unit_code,
+          assigned_location, key_vault_tag, device_id, battery_pct, network_type,
+          last_lat, last_lng, accuracy_m, points_count, status, started_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 25.0889, 55.1462, 3.6, 1, 'ACTIVE_GPS_ESCORT', ?, ?)
+      `)
+      .run(
+        sessionCode,
+        user?.fullName ?? 'Mohammad Haseeb (SWK Advisor)',
+        user?.email ?? 'advisor@swk.rent',
+        effectiveRole,
+        unit.id,
+        unit.unitCode,
+        locationLabel,
+        unit.keyVaultTag ?? `SWK-KEY-${unit.unitNo}`,
+        body.deviceId?.trim() || 'SWK-AND-NATIVE-BRIDGE',
+        Number(body.batteryPct) || 96,
+        body.networkType?.trim() || '5G / Wi-Fi',
+        now,
+        now,
+      )
+
+    recordAuditLog({
+      user,
+      action: 'FIELD_DUTY_GPS_STARTED',
+      entityType: 'FIELD_DUTY',
+      entityRef: sessionCode,
+      details: `Started Android Live GPS Viewing Escort (${sessionCode}) at ${locationLabel}`,
+    })
+
+    const session = listFieldDutySessions().find(s => s.id === Number(info.lastInsertRowid))
+    return { ok: true, session }
+  })
+
+  const handleDutyLocationBatch = async (req: FastifyRequest, reply: FastifyReply) => {
+    const id = Number((req.params as any).id)
+    const row = db.prepare('SELECT * FROM field_duty_sessions WHERE id = ?').get(id) as any
+    if (!row) return reply.code(404).send({ error: 'Field duty session not found' })
+
+    const body = (req.body ?? {}) as {
+      device_id?: string
+      battery_pct?: number
+      network_type?: string
+      points?: Array<{ lat?: number; lng?: number; accuracy_m?: number; timestamp?: string }>
+    }
+    const pts = Array.isArray(body.points) && body.points.length > 0 ? body.points : [{ lat: 25.0894, lng: 55.1468, accuracy_m: 3.4 }]
+    const lastPt = pts[pts.length - 1]!
+    const now = new Date().toISOString()
+
+    db.prepare(`
+      UPDATE field_duty_sessions
+      SET device_id = ?,
+          battery_pct = ?,
+          network_type = ?,
+          last_lat = ?,
+          last_lng = ?,
+          accuracy_m = ?,
+          points_count = points_count + ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      body.device_id || row.device_id,
+      Number(body.battery_pct) > 0 ? Number(body.battery_pct) : row.battery_pct,
+      body.network_type || row.network_type,
+      Number(lastPt.lat) || row.last_lat,
+      Number(lastPt.lng) || row.last_lng,
+      Number(lastPt.accuracy_m) || row.accuracy_m,
+      pts.length,
+      now,
+      id,
+    )
+
+    const updated = listFieldDutySessions().find(s => s.id === id)
+    return { ok: true, session: updated }
+  }
+
+  app.post('/api/field-duty/:id/location-batch', handleDutyLocationBatch)
+  app.post('/api/swk-one/field-duty/:id/location-batch', handleDutyLocationBatch)
+
+  const handleDutyEnd = async (req: FastifyRequest, reply: FastifyReply) => {
+    const id = Number((req.params as any).id)
+    const row = db.prepare('SELECT * FROM field_duty_sessions WHERE id = ?').get(id) as any
+    if (!row) return reply.code(404).send({ error: 'Field duty session not found' })
+
+    const now = new Date().toISOString()
+    db.prepare(`
+      UPDATE field_duty_sessions
+      SET status = 'COMPLETED_VERIFIED', updated_at = ?
+      WHERE id = ?
+    `).run(now, id)
+
+    const updated = listFieldDutySessions().find(s => s.id === id)
+    return { ok: true, session: updated }
+  }
+
+  app.post('/api/field-duty/:id/end', handleDutyEnd)
+  app.post('/api/swk-one/field-duty/:id/end', handleDutyEnd)
 
   // ------------------------------------------------------------------
   // EXTERNAL OS REST API & WEBHOOK INTEGRATION ENDPOINTS
